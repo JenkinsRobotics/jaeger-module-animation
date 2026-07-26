@@ -17,6 +17,11 @@ dynamic = ["version", "dependencies"]
 
 [project.optional-dependencies]
 dev = ["pytest>=7", "ruff"]
+# The player's window. PySide6 is the ecosystem's standard cross-platform
+# GUI toolkit, but it stays OPTIONAL: a robot renders onto hardware and
+# must never need a desktop toolkit to do it. `play --headless` (the
+# acceptance gate) imports nothing but the adapters.
+gui = ["pyside6>=6.5"]
 # Video decoding is optional: video_adapter imports imageio lazily inside
 # its methods, so the package imports and every other adapter works
 # without these. A missing video codec must not cost you a face.

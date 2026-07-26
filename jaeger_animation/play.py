@@ -9,11 +9,16 @@ the adapters **directly** — no bus, no JaegerOS runtime, no AI product —
 so if it renders in a venv holding only ``jaeger-os`` and
 ``jaeger-animation``, the JaegerOS-only pin is real rather than asserted.
 
-The window uses ``tkinter`` (stdlib) and PIL (already a hard dependency),
-so the player adds no dependency of its own.  Mochi's own player
-(``interfaces/v4/mochi_vdisplay_player_qt.py``, 579 lines of PySide6 +
-ZMQ overlay) was deliberately not ported: this one only has to prove the
-engine works.
+The window is **PySide6**, the ecosystem's standard cross-platform GUI
+toolkit, and is an OPTIONAL extra (``pip install
+"jaeger-animation[gui]"``).  A robot renders frames onto hardware and
+must never need a desktop toolkit installed to do it, so ``--headless``
+— the path the tests and the acceptance gate use — imports nothing but
+the adapters.
+
+GUI/logic separation holds: :func:`render` is toolkit-agnostic and does
+the real work; :func:`show` is a thin view over it.  Swapping PySide6
+for something else touches one function.
 """
 
 from __future__ import annotations
@@ -73,45 +78,71 @@ def render(asset: str, *, adapter: str | None = None, width: int = 480,
 
 
 def show(asset: str, *, adapter: str | None = None, width: int = 480,
-         height: int = 320, fps: int = 30) -> None:
-    """Play ``asset`` in a window until it ends or the window closes."""
-    import tkinter as tk
+         height: int = 320, fps: int = 30, scale: int = 1) -> None:
+    """Play ``asset`` in a PySide6 window until it ends or is closed.
 
-    from PIL import Image, ImageTk
+    ``scale`` nearest-neighbour-magnifies the output, so a 64x64 face is
+    actually visible on a Retina display without resampling the engine's
+    real output — what you see is the pixels the engine produced.
+    """
+    try:
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtGui import QImage, QPixmap
+        from PySide6.QtWidgets import QApplication, QLabel
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise SystemExit(
+            "the window needs PySide6 (the ecosystem's standard GUI "
+            "toolkit):\n"
+            "    pip install 'jaeger-animation[gui]'\n"
+            "Or use --headless, which needs nothing beyond the engine."
+        ) from exc
 
     key, impl = resolve_adapter(asset, adapter)
     impl.open(asset, width=width, height=height, params={"loop": True})
 
-    root = tk.Tk()
-    root.title(f"JaegerAnimation — {pathlib.Path(asset).name} [{key}]")
-    label = tk.Label(root, borderwidth=0, highlightthickness=0)
-    label.pack()
-    root.bind("<Escape>", lambda _e: root.destroy())
+    app = QApplication.instance() or QApplication([])
+    label = QLabel()
+    label.setWindowTitle(f"JaegerAnimation — {pathlib.Path(asset).name} [{key}]")
+    label.setFixedSize(width * scale, height * scale)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
     started = time.perf_counter()
+    timer = QTimer()
 
     def tick() -> None:
         try:
             frame = impl.next_frame(time.perf_counter() - started)
         except Exception as exc:  # noqa: BLE001
             print(f"render error: {type(exc).__name__}: {exc}")
-            root.destroy()
+            timer.stop()
+            label.close()
             return
         if frame is None:
-            root.destroy()
+            timer.stop()
+            label.close()
             return
-        img = Image.frombytes(
-            "RGBA", (frame.width, frame.height), bytes(frame.data))
-        photo = ImageTk.PhotoImage(img)
-        label.configure(image=photo)
-        # Tk garbage-collects the image unless a reference is held on the
-        # widget; without this the window renders blank.
-        label.image = photo  # type: ignore[attr-defined]
-        root.after(max(1, frame.duration_ms or int(1000 / fps)), tick)
+        img = QImage(
+            bytes(frame.data), frame.width, frame.height,
+            frame.width * 4, QImage.Format.Format_RGBA8888,
+        )
+        pix = QPixmap.fromImage(img)
+        if scale != 1:
+            # FastTransformation = nearest neighbour: show the engine's
+            # actual pixels, not a smoothed guess at them.
+            pix = pix.scaled(
+                width * scale, height * scale,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.FastTransformation,
+            )
+        label.setPixmap(pix)
+        timer.start(max(1, frame.duration_ms or int(1000 / fps)))
 
-    root.after(0, tick)
+    timer.setSingleShot(True)
+    timer.timeout.connect(tick)
+    label.show()
+    tick()
     try:
-        root.mainloop()
+        app.exec()
     finally:
         try:
             impl.close()
@@ -132,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="fallback pacing when the adapter reports none")
     ap.add_argument("--frames", type=int, default=120,
                     help="max frames to render in --headless")
+    ap.add_argument("--scale", type=int, default=1,
+                    help="magnify the window NxN (nearest neighbour) so a "
+                         "64x64 face is visible; does not resample output")
     ap.add_argument("--headless", action="store_true",
                     help="render without a window; print frame stats")
     args = ap.parse_args(argv)
@@ -159,7 +193,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if ok else 1
 
     show(args.asset, adapter=args.adapter, width=width, height=height,
-         fps=args.fps)
+         fps=args.fps, scale=max(1, args.scale))
     return 0
 
 
