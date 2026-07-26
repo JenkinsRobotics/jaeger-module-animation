@@ -7,11 +7,14 @@
 > side-channels that become a second copy of a truth the contract should
 > own.
 
-**FN-1 through FN-4 are RESOLVED** — built on JaegerOS branch
-`jaeger-animation` (commit `d1fd56f`) after the operator lifted the
+**FN-1 through FN-5 are RESOLVED** — built on JaegerOS branch
+`jaeger-animation` (`d1fd56f`, `66566eb`) after the operator lifted the
 catalogue-only instruction on 2026-07-26. They are kept here, not
 deleted, because the reasoning is the record of *why* those contract
-types exist. **FN-5 is open.**
+types exist.
+
+Remaining framework work is future optimization, not gaps this module
+hit — see JaegerOS `dev/docs/roadmap/20260726_ros_parity_review.md`.
 
 | | Gap | Status |
 |---|---|---|
@@ -19,7 +22,7 @@ types exist. **FN-5 is open.**
 | FN-2 | frame pacing on the bus | ✅ built (`AnimationFrame`) |
 | FN-3 | `FrameBuffer` as a contract type | ✅ built |
 | FN-4 | animation frames need their own topic | ✅ built |
-| FN-5 | discovery swallows a contributor's ImportError | ⬜ open |
+| FN-5 | discovery swallows a contributor's ImportError | ✅ built |
 
 Status key: **blocking** (module cannot do its job) · **degraded**
 (works, with a real limitation) · **cosmetic** (correctness unaffected).
@@ -154,7 +157,7 @@ so a renderer showing the face is never handed a movie.
 
 ---
 
-## FN-5 — discovery swallows a contributor's ImportError · degraded
+## FN-5 — discovery swallows a contributor's ImportError · degraded · ✅ RESOLVED
 
 **Hit at:** the clean-venv gate, 2026-07-26.
 
@@ -174,10 +177,12 @@ Note the asymmetry: a malformed `module.yaml` inside a discovered root
 raises loudly, by design. An `ImportError` reaching the same root does
 not.
 
-**Cost to fix:** log the exception at WARNING in
-`_external_module_roots`'s `except`. Two lines. Optionally surface it in
-`jaeger doctor` as "installed but not loadable", which is exactly the
-class of failure an operator cannot otherwise diagnose.
+**Resolved:** both fail-soft paths now warn with the contributor name,
+the entry-point value, and the real exception. Verified against the
+original failure — the warning names `jaeger_animation`, its entry point,
+and `ModuleNotFoundError: pydantic`. The fail-soft behaviour itself is
+unchanged: one bad contributor still does not stop the others, and a
+healthy boot stays quiet.
 
 ---
 
