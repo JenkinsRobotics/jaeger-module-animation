@@ -1,6 +1,7 @@
 # STATUS — JaegerAnimation
 
-**0.1.0 · 2026-07-26 · the raster engine works; the procedural half does not.**
+**0.1.0 · 2026-07-26 · the raster engine works and ships a face; the
+procedural half does not.**
 
 Ported from Mochi into a standalone JaegerOS module. JaegerAI was not
 modified. Framework gaps hit along the way were built on JaegerOS branch
@@ -25,7 +26,14 @@ modified. Framework gaps hit along the way were built on JaegerOS branch
   the `jaeger_os.module_roots` entry point.
 - **The player** — `python -m jaeger_animation.play`, headless or a
   PySide6 window.
-- **31 tests pass.**
+- **The `emotes` demo character** — a 9x2 sprite atlas, nine emotions in
+  two mouth states. Column selects emotion, row selects open (talking) or
+  closed (idle), so alternating rows on one column is a mouth flap. All
+  18 cells render at 64x64, 128x128 and 480x320.
+- **Sprite grid addressing** — `params={"cell": n, "grid": (cols, rows)}`,
+  so a caller picks frame 12 of an evenly-cut sheet without pixel
+  arithmetic. `src` rects still work for irregular atlases.
+- **59 tests pass.**
 
 ## BROKEN — the procedural half
 
@@ -58,8 +66,6 @@ never been called end-to-end through a live runtime bus.
 
 ## Not built
 
-- **`assets/` is empty.** The module renders whatever it is handed and
-  ships no default face. A bare install has nothing to show.
 - **README and `docs/index.html` still carry template placeholders**
   (18 and 46 respectively).
 - **Nothing pushed.** All work is local.

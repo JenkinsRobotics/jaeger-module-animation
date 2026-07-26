@@ -78,7 +78,8 @@ def render(asset: str, *, adapter: str | None = None, width: int = 480,
 
 
 def show(asset: str, *, adapter: str | None = None, width: int = 480,
-         height: int = 320, fps: int = 30, scale: int = 1) -> None:
+         height: int = 320, fps: int = 30, scale: int = 1,
+         params: dict | None = None) -> None:
     """Play ``asset`` in a PySide6 window until it ends or is closed.
 
     ``scale`` nearest-neighbour-magnifies the output, so a 64x64 face is
@@ -98,7 +99,8 @@ def show(asset: str, *, adapter: str | None = None, width: int = 480,
         ) from exc
 
     key, impl = resolve_adapter(asset, adapter)
-    impl.open(asset, width=width, height=height, params={"loop": True})
+    impl.open(asset, width=width, height=height,
+              params={"loop": True, **(params or {})})
 
     app = QApplication.instance() or QApplication([])
     label = QLabel()
@@ -150,6 +152,84 @@ def show(asset: str, *, adapter: str | None = None, width: int = 480,
             pass
 
 
+def cycle(asset: str, *, adapter: str = "sprite", width: int, height: int,
+          grid: tuple[int, int], fps: int = 2, scale: int = 1,
+          headless: bool = False) -> int:
+    """Walk every cell of a sprite sheet in turn.
+
+    A sprite sheet is a set of stills, so ``show()`` on one renders a
+    single frozen frame — which tells you nothing about whether the
+    sheet is cut correctly. This steps through all of them, which is how
+    you actually SEE a character.
+    """
+    cols, rows = grid
+    total = cols * rows
+
+    if headless:
+        ok = True
+        for cell in range(total):
+            frames = render(asset, adapter=adapter, width=width,
+                            height=height, max_frames=1,
+                            params={"cell": cell, "grid": grid})
+            good = bool(frames) and len(frames[0].data) == width * height * 4
+            ok = ok and good
+            print(f"cell {cell:2d}/{total - 1}  "
+                  f"{'ok' if good else 'FAILED'}")
+        print(f"{total} cells  {width}x{height}  "
+              f"{'all ok' if ok else 'HAS FAILURES'}")
+        return 0 if ok else 1
+
+    try:
+        from PySide6.QtCore import Qt, QTimer
+        from PySide6.QtGui import QImage, QPixmap
+        from PySide6.QtWidgets import QApplication, QLabel
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise SystemExit(
+            "the window needs PySide6: pip install 'jaeger-animation[gui]'\n"
+            "Or add --headless."
+        ) from exc
+
+    app = QApplication.instance() or QApplication([])
+    label = QLabel()
+    label.setFixedSize(width * scale, height * scale)
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    state = {"cell": 0}
+
+    def tick() -> None:
+        cell = state["cell"] % total
+        state["cell"] += 1
+        _, impl = resolve_adapter(asset, adapter)
+        try:
+            impl.open(asset, width=width, height=height,
+                      params={"cell": cell, "grid": grid})
+            frame = impl.next_frame(0.0)
+        finally:
+            try:
+                impl.close()
+            except Exception:  # noqa: BLE001
+                pass
+        if frame is None:
+            return
+        label.setWindowTitle(
+            f"{pathlib.Path(asset).name} — cell {cell}/{total - 1}")
+        img = QImage(bytes(frame.data), frame.width, frame.height,
+                     frame.width * 4, QImage.Format.Format_RGBA8888)
+        pix = QPixmap.fromImage(img)
+        if scale != 1:
+            pix = pix.scaled(width * scale, height * scale,
+                             Qt.AspectRatioMode.KeepAspectRatio,
+                             Qt.TransformationMode.FastTransformation)
+        label.setPixmap(pix)
+
+    timer = QTimer()
+    timer.timeout.connect(tick)
+    label.show()
+    tick()
+    timer.start(max(1, int(1000 / max(1, fps))))
+    app.exec()
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="python -m jaeger_animation.play",
@@ -158,6 +238,13 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("asset", help="path to an image/gif/video/sprite/scene")
     ap.add_argument("--adapter", default=None,
                     help=f"one of {sorted(ADAPTERS)} (default: by extension)")
+    ap.add_argument("--cell", type=int, default=None,
+                    help="sprite sheets: which cell to show (needs --grid)")
+    ap.add_argument("--grid", default=None, metavar="COLSxROWS",
+                    help="sprite sheets: sheet layout, e.g. 9x2")
+    ap.add_argument("--cycle", action="store_true",
+                    help="sprite sheets: walk every cell in turn, so one "
+                         "run shows the whole character")
     ap.add_argument("--size", default="480x320", metavar="WxH")
     ap.add_argument("--fps", type=int, default=30,
                     help="fallback pacing when the adapter reports none")
@@ -179,9 +266,27 @@ def main(argv: list[str] | None = None) -> int:
     if not pathlib.Path(args.asset).exists():
         raise SystemExit(f"asset not found: {args.asset}")
 
+    params: dict = {}
+    if args.grid:
+        try:
+            c_str, _, r_str = args.grid.partition("x")
+            params["grid"] = (int(c_str), int(r_str))
+        except ValueError:
+            raise SystemExit(f"--grid must look like 9x2, got {args.grid!r}")
+    if args.cell is not None:
+        params["cell"] = args.cell
+
+    if args.cycle:
+        if "grid" not in params:
+            raise SystemExit("--cycle needs --grid, e.g. --grid 9x2")
+        return cycle(args.asset, adapter=args.adapter or "sprite",
+                     width=width, height=height, grid=params["grid"],
+                     fps=args.fps, scale=max(1, args.scale),
+                     headless=args.headless)
+
     if args.headless:
         frames = render(args.asset, adapter=args.adapter, width=width,
-                        height=height, max_frames=args.frames)
+                        height=height, max_frames=args.frames, params=params)
         if not frames:
             print("0 frames — the adapter produced nothing")
             return 1
@@ -193,7 +298,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if ok else 1
 
     show(args.asset, adapter=args.adapter, width=width, height=height,
-         fps=args.fps, scale=max(1, args.scale))
+         fps=args.fps, scale=max(1, args.scale), params=params)
     return 0
 
 

@@ -46,21 +46,37 @@ class SpriteAdapter:
         """Load the sheet, crop the named source rect, centre on the
         target canvas, cache as RGBA8.
 
-        ``params``:
-          ``src``        (x, y, w, h) crop on the sheet — required
-                          accepts list/tuple or comma-separated string
-                          ("0,0,32,32") for Mscript-compile compatibility
-          ``bg_rgb``     (r, g, b) for canvas background; default black
+        ``params`` — two ways to say which sprite, pick one:
+
+          ``src``    (x, y, w, h) crop on the sheet. Accepts list/tuple
+                     or a comma-separated string ("0,0,32,32") for
+                     MScript-compile compatibility.
+          ``cell``   integer index into a uniform grid, with ``grid``
+                     = (cols, rows). Row-major: cell 0 is top-left,
+                     cell ``cols`` is the start of row 1.
+
+        ``cell``/``grid`` exists because a caller should not have to do
+        pixel arithmetic to pick frame 12 of an evenly-cut sheet — which
+        is what almost every real sprite sheet is. ``src`` stays for
+        irregular atlases where cells are not uniform.
+
+          ``bg_rgb``  (r, g, b) canvas background; default black
         """
         p = dict(params or {})
         self._width = max(1, int(width))
         self._height = max(1, int(height))
         bg_rgb = tuple(p.get("bg_rgb", (0, 0, 0)))
         src_rect = _coerce_src(p.get("src"))
+        if src_rect is None and p.get("cell") is not None:
+            with Image.open(asset_path) as probe:
+                sheet_w, sheet_h = probe.size
+            src_rect = _cell_rect(
+                p.get("cell"), p.get("grid"), sheet_w, sheet_h)
         if src_rect is None:
             raise ValueError(
-                f"SpriteAdapter needs params['src'] = (x, y, w, h); "
-                f"got {p.get('src')!r}"
+                f"SpriteAdapter needs params['src'] = (x, y, w, h) or "
+                f"params['cell'] with params['grid'] = (cols, rows); "
+                f"got src={p.get('src')!r} cell={p.get('cell')!r}"
             )
         with Image.open(asset_path) as sheet:
             sx, sy, sw, sh = src_rect
@@ -88,6 +104,31 @@ class SpriteAdapter:
 
 
 # ── helpers ───────────────────────────────────────────────────────
+
+def _cell_rect(cell, grid, sheet_w: int, sheet_h: int,
+               ) -> tuple[int, int, int, int]:
+    """Row-major cell index on a uniform grid -> (x, y, w, h).
+
+    Raises rather than clamping an out-of-range index: silently showing
+    the wrong face is worse than a clear error naming the bounds.
+    """
+    if grid is None:
+        raise ValueError("params['cell'] needs params['grid'] = (cols, rows)")
+    try:
+        cols, rows = (int(v) for v in grid)
+    except Exception as exc:  # noqa: BLE001
+        raise ValueError(
+            f"params['grid'] must be (cols, rows); got {grid!r}") from exc
+    if cols < 1 or rows < 1:
+        raise ValueError(f"params['grid'] must be positive; got {grid!r}")
+    idx = int(cell)
+    if not 0 <= idx < cols * rows:
+        raise ValueError(
+            f"cell {idx} out of range for a {cols}x{rows} grid "
+            f"({cols * rows} cells)")
+    cw, ch = sheet_w // cols, sheet_h // rows
+    return ((idx % cols) * cw, (idx // cols) * ch, cw, ch)
+
 
 def _coerce_src(value) -> tuple[int, int, int, int] | None:
     """Accept (x, y, w, h) as list/tuple/string."""
