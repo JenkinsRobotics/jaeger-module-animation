@@ -26,7 +26,18 @@ class VideoAdapter:
         self._loop = True
 
     def open(self, asset_path: str, *, width: int, height: int, params: dict) -> None:
-        import imageio
+        # Imported lazily, and deliberately NOT in module.yaml's
+        # requires_libraries: a missing video codec must degrade to "no
+        # video" rather than cost you a face. But it has to SAY so — a
+        # bare ModuleNotFoundError names a package the operator never
+        # asked for and does not say how to get it.
+        try:
+            import imageio
+        except ImportError as exc:  # pragma: no cover - optional dep
+            raise RuntimeError(
+                "video playback needs the optional decoder: "
+                "pip install 'jaeger-animation[video]'"
+            ) from exc
         self._w, self._h = width, height
         self._loop = bool((params or {}).get("loop", True))
         self._reader = imageio.get_reader(asset_path)  # ffmpeg backend

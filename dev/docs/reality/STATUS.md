@@ -1,7 +1,6 @@
 # STATUS — JaegerAnimation
 
-**0.1.0 · 2026-07-26 · the raster engine works and ships a face; the
-procedural half does not.**
+**0.1.0 · 2026-07-26 · all six adapters render; ships a character.**
 
 Ported from Mochi into a standalone JaegerOS module. JaegerAI was not
 modified. Framework gaps hit along the way were built on JaegerOS branch
@@ -9,9 +8,10 @@ modified. Framework gaps hit along the way were built on JaegerOS branch
 
 ## Works — verified, not asserted
 
-- **Raster decoding** — `image` and `gif` render at 8x8, 64x64 and 24x1.
-  One asset, any display geometry, which is the property the whole
-  design rests on.
+- **All six adapters render** — `image` (incl. `.bmp`), `gif`, `sprite`,
+  `bitmap` (1-bit JSON), `math` (procedural scenes), `video` (with the
+  `[video]` extra). Verified at 8x8, 64x64 and 24x1: one asset, any
+  display geometry, which is the property the whole design rests on.
 - **The node** — `/act/animation` and `/act/media` in; `AnimationFrame`
   (with pacing), `AnimationState`, `AnimationStats`, `MediaFrame`,
   `MediaState` out. No renderer inside, no frame callback.
@@ -42,36 +42,40 @@ modified. Framework gaps hit along the way were built on JaegerOS branch
 - **Sprite grid addressing** — `params={"cell": n, "grid": (cols, rows)}`,
   so a caller picks frame 12 of an evenly-cut sheet without pixel
   arithmetic. `src` rects still work for irregular atlases.
-- **82 tests pass.**
+- **94 tests pass.**
 
-## BROKEN — the procedural half
+## Fixed since the first audit
 
-**No MathScript/MScript scene renders. Not one.** ~900 lines of ported
-`procedural/` code is unreachable, and this is the half that generalizes
-across geometry (a 720p GIF cannot render on a 24x8 strip; a procedural
-scene can).
+Three of six adapters were broken, each for a different reason, and all
+three looked fine because the suite only asserted adapters could be
+*constructed*:
 
-Two independent causes:
+- **`bitmap`** — extension routing sent `.bmp` to it, but it renders
+  1-bit packed monochrome from JSON. It was `json.loads()`-ing binary.
+  `.bmp` is an image; `.json` is a bitmap.
+- **`math`** — every real scene subclasses `Animation` and imports
+  `plugin_core.*` (Mochi) or `mscript.*` (JaegerAI); the adapter looked
+  for a `MathScript` base no content had heard of. It now accepts both
+  lineages and resolves those import names during scene load, scoped so
+  they never leak into `sys.modules`.
+- **`video`** — a missing optional codec raised a bare
+  `ModuleNotFoundError`. It now names the extra.
 
-1. **Scenes import a package name that does not exist here.** Mochi's 52
-   math assets do `from plugin_core.mochi_animations import Animation`;
-   JaegerAI's 20 scenes do `from mscript.mochi_animations import ...`.
-   This module has neither — the code lives at
-   `jaeger_animation.procedural.mochi_animations`.
-2. **Two incompatible base classes.** `math_adapter.py` defines its own
-   `MathScript` and loads subclasses of it. Every real scene subclasses
-   `Animation` from `mochi_animations.py`. The adapter finds nothing and
-   raises `no MathScript subclass found`.
+Also: a scene that raises now raises. Returning `None` was
+indistinguishable from "clip ended", which is how a scene that never
+rendered looked like one that finished.
 
-Also: `.mscript` files are not in `EXTENSION_MAP`, so they route to
-`image` and fail. `mscript_engine.py` was copied but nothing calls it.
+**There is now a render test per adapter, plus a guard that fails if a
+new adapter arrives without one.** Constructing an adapter proves
+nothing; that is what let three broken ones ship.
 
-## Untested
+## Not an adapter
 
-`sprite`, `bitmap` and `video` adapters construct but no test renders
-one. `video` additionally needs the `[video]` extra (`imageio`), never
-exercised. The three tools validate their arguments in tests but have
-never been called end-to-end through a live runtime bus.
+`.mscript` is a **timeline DSL** — it sequences other assets
+(`MATH K[1] D[11.0] FG[...]`) rather than producing pixels. That is
+composition, which this engine deliberately leaves to the consumer, the
+same call made for `/act/timeline`. The parser and engine are vendored
+in `procedural/` but nothing here drives them.
 
 ## Not built
 

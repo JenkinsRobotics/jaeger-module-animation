@@ -37,8 +37,14 @@ __all__ = [
 #: Asset extension -> adapter key.  Used by the node and the player to
 #: pick a default when the caller does not name an adapter explicitly.
 EXTENSION_MAP: dict[str, str] = {
+    # NOTE: ".bmp" is an IMAGE, not `bitmap`. BitmapAdapter renders
+    # 1-bit packed monochrome from a JSON payload (Adafruit-GFX style);
+    # a .bmp file is a full-colour raster PIL reads directly. Routing
+    # .bmp -> bitmap made it try to json.loads() binary and die on a
+    # UnicodeDecodeError.
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
-    ".bmp": "bitmap",
+    ".bmp": "image", ".tif": "image", ".tiff": "image",
+    ".json": "bitmap",
     ".gif": "gif",
     ".mp4": "video", ".mov": "video", ".mkv": "video", ".webm": "video",
     ".m4v": "video", ".avi": "video",

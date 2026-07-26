@@ -36,8 +36,11 @@ adapter trusts its caller for now.
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import importlib.util
 import os
+import sys
 from typing import Any, Callable
 
 import numpy as np
@@ -167,8 +170,16 @@ class MathAdapter:
         )
         try:
             self._script.render_into(elapsed, rgb)
-        except Exception:
-            return None
+        except Exception as exc:  # noqa: BLE001
+            # Drop the script so the node stops calling a broken scene
+            # every frame, and RAISE once. Returning None silently was
+            # indistinguishable from "clip ended", which is how a scene
+            # that never rendered looked like one that finished.
+            self._script = None
+            raise RuntimeError(
+                f"scene render failed at t={elapsed:.3f}s: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
         rgba = np.empty(
             (self._height, self._width, 4), dtype=np.uint8,
         )
@@ -185,21 +196,76 @@ class MathAdapter:
 
 # ── helpers ───────────────────────────────────────────────────────
 
-def _load_math_script_class(asset_path: str) -> type[MathScript] | None:
-    """Import the file at ``asset_path``; return the first
-    :class:`MathScript` subclass it defines (excluding the base)."""
-    module_name = os.path.splitext(os.path.basename(asset_path))[0]
+#: Package names existing scenes import the animation base class from.
+#: Scene files are CONTENT, authored against whichever tree they grew up
+#: in — Mochi wrote ``plugin_core.mochi_animations``, JaegerAI wrote
+#: ``mscript.mochi_animations``, and this module holds the same code at
+#: ``jaeger_animation.procedural``. Rather than rewrite every scene (and
+#: break them for the projects they came from), the loader makes those
+#: names resolve here for the duration of the import.
+_SCENE_IMPORT_ALIASES = ("plugin_core", "mscript")
+
+
+@contextlib.contextmanager
+def _scene_import_aliases():
+    """Temporarily expose ``jaeger_animation.procedural`` under the names
+    scene files expect, then put ``sys.modules`` back exactly as it was.
+
+    Scoped rather than installed at import time: making ``plugin_core``
+    permanently importable would be this package quietly claiming a
+    generic top-level name.
+    """
+    import jaeger_animation.procedural as _proc
+
+    saved: dict[str, Any] = {}
+    try:
+        for alias in _SCENE_IMPORT_ALIASES:
+            saved[alias] = sys.modules.get(alias)
+            sys.modules[alias] = _proc
+            for sub in ("mochi_animations", "gfx", "font", "color_utils",
+                        "node_state"):
+                key = f"{alias}.{sub}"
+                saved[key] = sys.modules.get(key)
+                try:
+                    sys.modules[key] = importlib.import_module(
+                        f"jaeger_animation.procedural.{sub}")
+                except ImportError:
+                    saved.pop(key, None)
+        yield
+    finally:
+        for key, prior in saved.items():
+            if prior is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = prior
+
+
+def _load_math_script_class(asset_path: str):
+    """Import the file at ``asset_path``; return the scene class it
+    defines.
+
+    Accepts BOTH lineages: a :class:`MathScript` subclass (this
+    adapter's own base) or an :class:`Animation` subclass (what every
+    real scene in Mochi and JaegerAI actually subclasses). Supporting
+    only the first is why no scene rendered — the adapter defined a base
+    class no content had ever heard of.
+    """
+    from ..procedural.mochi_animations import Animation
+
+    module_name = f"_jaeger_scene_{os.path.splitext(os.path.basename(asset_path))[0]}"
     spec = importlib.util.spec_from_file_location(module_name, asset_path)
     if spec is None or spec.loader is None:
         return None
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    with _scene_import_aliases():
+        spec.loader.exec_module(module)
     for attr_name in dir(module):
         attr = getattr(module, attr_name)
-        if (
-            isinstance(attr, type)
-            and issubclass(attr, MathScript)
-            and attr is not MathScript
-        ):
+        if not isinstance(attr, type):
+            continue
+        if issubclass(attr, MathScript) and attr is not MathScript:
+            return attr
+        if (issubclass(attr, Animation) and attr is not Animation
+                and getattr(attr, "__abstractmethods__", None) == frozenset()):
             return attr
     return None
