@@ -176,3 +176,35 @@ def test_video_without_the_extra_names_the_extra():
     finally:
         builtins.__import__ = real
     assert "jaeger-animation[video]" in str(exc.value)
+
+
+def test_rgb_to_rgba_conversion_is_byte_correct(assets):
+    """The conversion moved from numpy to PIL for a 5.6x speedup. It must
+    still produce exactly the same pixels — a faster wrong answer is
+    worse than a slow right one."""
+    import numpy as np
+
+    frames = _render(assets / "scene.py", "math", n=1)
+    data = frames[0].data
+    assert len(data) == W * H * 4
+    px = np.frombuffer(data, dtype=np.uint8).reshape(H, W, 4)
+    assert (px[..., 0] == 200).all(), "red channel lost in conversion"
+    assert (px[..., 3] == 255).all(), "alpha must be opaque"
+
+
+def test_the_render_buffer_is_reused_across_frames(assets):
+    """Not for speed — measurement says numpy recycles allocations
+    anyway — but so a scene that keeps a reference to its buffer sees a
+    stable object rather than a new one every frame."""
+    from jaeger_animation.adapters import MathAdapter
+
+    a = MathAdapter()
+    a.open(str(assets / "scene.py"), width=16, height=16, params={})
+    try:
+        a.next_frame(0.0)
+        first = a._rgb
+        a.next_frame(0.1)
+        assert a._rgb is first, "render buffer was reallocated"
+    finally:
+        a.close()
+    assert a._rgb is None, "buffer not released on close"

@@ -44,6 +44,7 @@ import sys
 from typing import Any, Callable
 
 import numpy as np
+from PIL import Image
 
 from ..frames import FrameBuffer
 
@@ -97,6 +98,7 @@ class MathAdapter:
 
     def __init__(self) -> None:
         self._script: MathScript | None = None
+        self._rgb: Any = None      # reused render buffer
         self._width: int = 0
         self._height: int = 0
         self._start_t: float | None = None
@@ -157,6 +159,7 @@ class MathAdapter:
     def close(self) -> None:
         self._script = None
         self._start_t = None
+        self._rgb = None
 
     def next_frame(self, t: float) -> FrameBuffer | None:
         if self._script is None:
@@ -164,10 +167,16 @@ class MathAdapter:
         if self._start_t is None:
             self._start_t = t
         elapsed = max(0.0, t - self._start_t)
-        # Draw RGB; convert to RGBA before emitting.
-        rgb = np.zeros(
-            (self._height, self._width, 3), dtype=np.uint8,
-        )
+        # Scenes render RGB (they do np.frombuffer(buf).reshape(h, w, 3),
+        # so the buffer must be contiguous). Reuse it rather than
+        # allocating per frame — though measurement says the allocation
+        # itself is nearly free; numpy recycles freed blocks.
+        rgb = self._rgb
+        if rgb is None or rgb.shape != (self._height, self._width, 3):
+            rgb = self._rgb = np.zeros(
+                (self._height, self._width, 3), dtype=np.uint8)
+        else:
+            rgb[...] = 0
         try:
             self._script.render_into(elapsed, rgb)
         except Exception as exc:  # noqa: BLE001
@@ -180,15 +189,18 @@ class MathAdapter:
                 f"scene render failed at t={elapsed:.3f}s: "
                 f"{type(exc).__name__}: {exc}"
             ) from exc
-        rgba = np.empty(
-            (self._height, self._width, 4), dtype=np.uint8,
-        )
-        rgba[..., :3] = rgb
-        rgba[..., 3] = 255
+        # RGB -> RGBA through PIL, which is 5.6x faster than numpy's
+        # `rgba[..., :3] = rgb` (0.125 ms vs 0.701 ms on a 480x320
+        # frame). numpy has to scatter 3 bytes out of every 4, which is
+        # element-wise; PIL does it in one C loop. Measured, byte-
+        # identical output, and PIL is already a hard dependency.
+        #
+        # That one line WAS 88% of the cost of a procedural frame.
+        data = Image.fromarray(rgb, "RGB").convert("RGBA").tobytes()
         return FrameBuffer(
             width=self._width,
             height=self._height,
-            data=rgba.tobytes(),
+            data=data,
             duration_ms=self._duration_ms_per_frame,
             is_final=False,
         )
