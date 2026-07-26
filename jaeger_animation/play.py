@@ -152,30 +152,53 @@ def show(asset: str, *, adapter: str | None = None, width: int = 480,
             pass
 
 
-def cycle(asset: str, *, adapter: str = "sprite", width: int, height: int,
-          grid: tuple[int, int], fps: int = 2, scale: int = 1,
-          headless: bool = False) -> int:
-    """Walk every cell of a sprite sheet in turn.
+def character_frames(char) -> list[tuple[dict, str]]:
+    """Every (params, label) a character can show, in a stable order.
 
-    A sprite sheet is a set of stills, so ``show()`` on one renders a
-    single frozen frame — which tells you nothing about whether the
-    sheet is cut correctly. This steps through all of them, which is how
-    you actually SEE a character.
+    Expression-major so the window walks all of one face's mouth states
+    together — that is what makes a mouth flap visible rather than a
+    slideshow of unrelated faces.
     """
-    cols, rows = grid
-    total = cols * rows
+    out: list[tuple[dict, str]] = []
+    for expr in sorted(char.expressions):
+        for mouth in (sorted(char.mouth_states) or [""]):
+            out.append((char.play_params(expr, mouth),
+                        f"{expr}/{mouth}" if mouth else expr))
+    return out
+
+
+def cycle(asset: str, *, adapter: str = "sprite", width: int, height: int,
+          grid: tuple[int, int] | None = None, fps: int = 2, scale: int = 1,
+          headless: bool = False,
+          frames_spec: list[tuple[dict, str]] | None = None) -> int:
+    """Step through a sheet or a character, one state at a time.
+
+    A sprite sheet is a set of stills, so ``show()`` renders one frozen
+    frame — which tells you nothing about whether the sheet is cut
+    correctly or the character is wired up. This walks every state,
+    which is how you actually SEE a character.
+
+    With ``frames_spec`` (what ``--character --cycle`` passes) the states
+    are the character's NAMED expressions; without it, raw cell indices.
+    """
+    if frames_spec is None:
+        if grid is None:
+            raise SystemExit("cycle needs a grid or a character")
+        cols, rows = grid
+        frames_spec = [({"cell": i, "grid": grid}, f"cell {i}")
+                       for i in range(cols * rows)]
+    total = len(frames_spec)
 
     if headless:
         ok = True
-        for cell in range(total):
-            frames = render(asset, adapter=adapter, width=width,
-                            height=height, max_frames=1,
-                            params={"cell": cell, "grid": grid})
-            good = bool(frames) and len(frames[0].data) == width * height * 4
+        for params, label in frames_spec:
+            rendered = render(asset, adapter=adapter, width=width,
+                              height=height, max_frames=1, params=params)
+            good = (bool(rendered)
+                    and len(rendered[0].data) == width * height * 4)
             ok = ok and good
-            print(f"cell {cell:2d}/{total - 1}  "
-                  f"{'ok' if good else 'FAILED'}")
-        print(f"{total} cells  {width}x{height}  "
+            print(f"  {label:24s} {'ok' if good else 'FAILED'}")
+        print(f"{total} states  {width}x{height}  "
               f"{'all ok' if ok else 'HAS FAILURES'}")
         return 0 if ok else 1
 
@@ -193,15 +216,14 @@ def cycle(asset: str, *, adapter: str = "sprite", width: int, height: int,
     label = QLabel()
     label.setFixedSize(width * scale, height * scale)
     label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    state = {"cell": 0}
+    state = {"i": 0}
 
     def tick() -> None:
-        cell = state["cell"] % total
-        state["cell"] += 1
+        params, text = frames_spec[state["i"] % total]
+        state["i"] += 1
         _, impl = resolve_adapter(asset, adapter)
         try:
-            impl.open(asset, width=width, height=height,
-                      params={"cell": cell, "grid": grid})
+            impl.open(asset, width=width, height=height, params=params)
             frame = impl.next_frame(0.0)
         finally:
             try:
@@ -211,7 +233,8 @@ def cycle(asset: str, *, adapter: str = "sprite", width: int, height: int,
         if frame is None:
             return
         label.setWindowTitle(
-            f"{pathlib.Path(asset).name} — cell {cell}/{total - 1}")
+            f"{pathlib.Path(asset).stem} — {text}  "
+            f"[{state['i']}/{total}]")
         img = QImage(bytes(frame.data), frame.width, frame.height,
                      frame.width * 4, QImage.Format.Format_RGBA8888)
         pix = QPixmap.fromImage(img)
@@ -235,7 +258,18 @@ def main(argv: list[str] | None = None) -> int:
         prog="python -m jaeger_animation.play",
         description="Render an asset through the animation engine.",
     )
-    ap.add_argument("asset", help="path to an image/gif/video/sprite/scene")
+    ap.add_argument("asset", nargs="?", default=None,
+                    help="path to an image/gif/video/sprite/scene")
+    ap.add_argument("--character", default=None, metavar="NAME",
+                    help="play a character pack by name instead of a file "
+                         "(try: emotes)")
+    ap.add_argument("--expression", default="", metavar="NAME",
+                    help="which expression, e.g. happy (default: the "
+                         "character's own default)")
+    ap.add_argument("--mouth", default="", metavar="STATE",
+                    help="open or closed (default: the character's own)")
+    ap.add_argument("--list-characters", action="store_true",
+                    help="list available character packs and exit")
     ap.add_argument("--adapter", default=None,
                     help=f"one of {sorted(ADAPTERS)} (default: by extension)")
     ap.add_argument("--cell", type=int, default=None,
@@ -257,16 +291,47 @@ def main(argv: list[str] | None = None) -> int:
                     help="render without a window; print frame stats")
     args = ap.parse_args(argv)
 
+    from .characters import CharacterError, discover_characters
+
+    if args.list_characters:
+        for name, c in sorted(discover_characters().items()):
+            print(f"{name:12s} {c.display_name or name} v{c.version} "
+                  f"[{c.kind}]  expressions: "
+                  f"{', '.join(sorted(c.expressions))}")
+        return 0
+
     try:
         w_str, _, h_str = args.size.partition("x")
         width, height = int(w_str), int(h_str)
     except ValueError:
         raise SystemExit(f"--size must look like 640x480, got {args.size!r}")
 
+    params: dict = {}
+
+    if args.character:
+        chars = discover_characters()
+        if args.character not in chars:
+            raise SystemExit(
+                f"unknown character {args.character!r}; "
+                f"have {sorted(chars) or '(none)'}")
+        char = chars[args.character]
+        try:
+            params.update(char.play_params(args.expression, args.mouth))
+        except CharacterError as exc:
+            raise SystemExit(str(exc))
+        args.asset = str(char.asset_path)
+        if args.adapter is None:
+            args.adapter = char.adapter
+        if args.cycle:
+            return cycle(str(char.asset_path), adapter=char.adapter,
+                         width=width, height=height, fps=args.fps,
+                         scale=max(1, args.scale), headless=args.headless,
+                         frames_spec=character_frames(char))
+
+    if not args.asset:
+        raise SystemExit("give an asset path, or --character NAME")
     if not pathlib.Path(args.asset).exists():
         raise SystemExit(f"asset not found: {args.asset}")
-
-    params: dict = {}
     if args.grid:
         try:
             c_str, _, r_str = args.grid.partition("x")

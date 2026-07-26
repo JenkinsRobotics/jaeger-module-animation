@@ -26,14 +26,23 @@ modified. Framework gaps hit along the way were built on JaegerOS branch
   the `jaeger_os.module_roots` entry point.
 - **The player** — `python -m jaeger_animation.play`, headless or a
   PySide6 window.
-- **The `emotes` demo character** — a 9x2 sprite atlas, nine emotions in
-  two mouth states. Column selects emotion, row selects open (talking) or
-  closed (idle), so alternating rows on one column is a mouth flap. All
-  18 cells render at 64x64, 128x128 and 480x320.
+- **Character packs** — a self-contained folder with a `character.yaml`
+  declaring what it is and how to run it, the same shape as a module one
+  tier down. This is the format Anima Studio exports and this engine
+  consumes; the loader is strict and names the offending file. Persona
+  lives in the pack: the engine hardcodes no expression names, it reads
+  the character's own vocabulary.
+- **The `emotes` demo character** — nine emotions x two mouth states on a
+  9x2 atlas. Column selects emotion, row selects open (talking) or closed
+  (idle), so alternating rows on one column is a mouth flap. All 18
+  states render at 64x64, 128x128 and 480x320.
+- **The preview walk** — `play --character emotes --cycle` steps through
+  every named expression in a window; `--headless` runs the same code
+  path, so the demo is tested rather than merely available.
 - **Sprite grid addressing** — `params={"cell": n, "grid": (cols, rows)}`,
   so a caller picks frame 12 of an evenly-cut sheet without pixel
   arithmetic. `src` rects still work for irregular atlases.
-- **59 tests pass.**
+- **82 tests pass.**
 
 ## BROKEN — the procedural half
 
