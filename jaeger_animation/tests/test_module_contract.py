@@ -88,8 +88,8 @@ def test_manifest_factory_resolves() -> None:
 
 
 def test_manifest_validates_against_installed_jaeger_os() -> None:
-    """ModuleSpec sets forbid_unknown_fields=True — this catches a field
-    the framework does not know about (e.g. `kind:`, still planned)."""
+    """ModuleSpec sets forbid_unknown_fields=True — this catches any
+    field the installed framework does not know about."""
     from jaeger_os.contract.modules import ModuleSpec
 
     import msgspec
@@ -119,16 +119,81 @@ def test_produced_topics_match_what_the_node_publishes() -> None:
     so it must not drift from the code."""
     src = (PACKAGE / "node.py").read_text()
     for symbol, topic in (
+        ("AnimationFrame", "/sense/animation_frame"),
+        ("AnimationState", "/sense/animation_state"),
+        ("AnimationStats", "/sense/animation_stats"),
         ("MediaFrame", "/sense/media_frame"),
         ("MediaState", "/sense/media_state"),
-        ("AnimationState", "/sense/animation_state"),
     ):
         assert f"topics.{symbol}(" in src, f"node never publishes {symbol}"
         assert topic in MANIFEST["produces"], f"{topic} missing from manifest"
 
 
-def test_tools_are_honestly_empty() -> None:
-    """No tools is a deliberate call, not an oversight: driving a face
-    from an agent means mapping emotion -> asset, which is character data
-    owned by the consumer, not by a persona-free engine."""
-    assert MANIFEST["tools"] == []
+# ── the three declared surfaces ──────────────────────────────────
+#
+# A module declares topics (general I/O), tools (agentic I/O), and a
+# config slice — the pattern kokoro_tts and whisper_stt already ship.
+# These pin the manifest to the implementations so they cannot drift.
+
+def test_declared_tools_exist_and_match():
+    """module.yaml's tools: is the one copy of this truth."""
+    from jaeger_animation.tools import TOOLS
+
+    assert set(MANIFEST["tools"]) == set(TOOLS), (
+        f"manifest {MANIFEST['tools']} vs implemented {sorted(TOOLS)}"
+    )
+    for name, fn in TOOLS.items():
+        assert callable(fn), name
+        assert fn.__doc__, f"{name} has no docstring — an agent reads it"
+
+
+def test_tools_are_persona_free():
+    """The mechanism, not the policy. An emotion->asset table is
+    character data owned by the consumer, never by this engine."""
+    from jaeger_animation import tools
+
+    src = pathlib.Path(tools.__file__).read_text().lower()
+    for word in ("happy", "sad", "angry", "emotion="):
+        assert f"def {word}" not in src
+    assert "set_avatar_state" not in MANIFEST["tools"]
+
+
+def test_tools_validate_input_before_touching_the_bus():
+    """A tool is called by a model, so bad arguments are expected
+    traffic, not exceptional — they must return a reason, not raise."""
+    from jaeger_animation.tools import play_animation, play_media
+
+    r = play_animation(asset_path="")
+    assert r["ok"] is False and "required" in r["reason"]
+
+    r = play_animation(asset_path="x.gif", adapter="nonexistent")
+    assert r["ok"] is False and "unknown adapter" in r["reason"]
+
+    r = play_media(path="")
+    assert r["ok"] is False and "required" in r["reason"]
+
+
+def test_config_slice_matches_the_manifest():
+    from jaeger_animation.config import AnimationConfig
+
+    assert MANIFEST["config"] == "animation"
+    cfg = AnimationConfig()
+    assert cfg.width > 0 and cfg.height > 0
+    with pytest.raises(Exception):
+        AnimationConfig(nonsense=1)  # extra="forbid" typo guard
+
+
+def test_kind_is_declared_and_legal():
+    from jaeger_os.contract.modules import MODULE_KINDS
+
+    assert MANIFEST["kind"] == "processing"
+    assert MANIFEST["kind"] in MODULE_KINDS
+
+
+def test_telemetry_topic_is_separate_from_frames():
+    """Monitoring whether a face keeps up must not require subscribing
+    to its full pixel stream."""
+    from jaeger_os.transport import topics
+
+    assert topics.SENSE_ANIMATION_STATS in MANIFEST["produces"]
+    assert topics.SENSE_ANIMATION_FRAME in MANIFEST["produces"]

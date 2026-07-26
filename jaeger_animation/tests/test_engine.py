@@ -105,7 +105,7 @@ def test_node_publishes_frames_on_the_bus(bus, png):
     """Frames reach ANY subscriber. This is what lets a window and an
     LED matrix render from one engine."""
     frames = []
-    bus.subscribe(topics.SENSE_MEDIA_FRAME, frames.append)
+    bus.subscribe(topics.SENSE_ANIMATION_FRAME, frames.append)
 
     node = make_animation_node(bus, {"width": 16, "height": 16})
     t = _run(node)
@@ -116,6 +116,10 @@ def test_node_publishes_frames_on_the_bus(bus, png):
         f = frames[0]
         assert (f.width, f.height) == (16, 16)
         assert len(f.data) == 16 * 16 * 4
+        # The whole reason /sense/animation_frame exists: a subscriber
+        # gets pacing and end-of-clip without guessing.
+        assert hasattr(f, "duration_ms") and hasattr(f, "is_final")
+        assert f.seq >= 1
     finally:
         node.stop()
         t.join(timeout=2)
@@ -187,7 +191,7 @@ def test_missing_asset_does_not_kill_the_node(bus):
 
 def test_stop_interrupts_a_running_clip(bus, gif):
     frames = []
-    bus.subscribe(topics.SENSE_MEDIA_FRAME, frames.append)
+    bus.subscribe(topics.SENSE_ANIMATION_FRAME, frames.append)
 
     node = make_animation_node(bus, {"width": 8, "height": 8})
     t = _run(node)

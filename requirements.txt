@@ -19,3 +19,4 @@ numpy>=1.24
 # NOT listed: imageio / imageio-ffmpeg. video_adapter imports them lazily
 # inside its methods, so the package imports fine without them and only
 # video playback degrades. Install with: pip install "jaeger-animation[video]"
+pydantic>=2.0

@@ -1,8 +1,10 @@
 """AnimationNode — decode/render an asset, publish frames on the bus.
 
-    /act/animation      ─┐                    ┌─▶ /sense/media_frame
+    /act/animation      ─┐                    ┌─▶ /sense/animation_frame
     /act/animation_stop ─┼─▶  AnimationNode  ─┼─▶ /sense/animation_state
-    /act/media          ─┘                    └─▶ /sense/media_state
+    /act/media          ─┘                    ├─▶ /sense/animation_stats
+                                              ├─▶ /sense/media_frame
+                                              └─▶ /sense/media_state
 
 **The node's job ends at frames on a topic.**  It has no renderer, no
 frame callback, no idea whether anything is listening.  A desktop window,
@@ -16,10 +18,18 @@ Two intents, one engine:
   is the face: an avatar expression, an eye state, a procedural scene.
 * ``/act/media`` — play an arbitrary file, adapter chosen by extension.
 
-Both decode through the same adapters and emit the same ``MediaFrame``.
-They stay distinct because "make the face do this" and "play this movie"
-are different intents to a consumer even when the pixels arrive
-identically.
+Both decode through the same adapters, but land on different frame
+topics, so a renderer that only wants the FACE never has a movie handed
+to it.
+
+**The module declares its whole I/O surface.** The framework provides
+pub/sub; deciding what a host can drive and monitor is the module's job.
+So alongside pixels and playback state it publishes
+``/sense/animation_stats`` — measured framerate against the clip's
+target, frames emitted and dropped, mean decode time, queue depth — on a
+fixed low cadence, never per frame. Telemetry rides its own topic
+because monitoring a face's health must not require subscribing to its
+full pixel stream.
 
 Threading: subscriber callbacks only enqueue.  All decoding happens in
 ``tick()`` on the node's own thread, because blocking the bus delivery
@@ -65,6 +75,7 @@ class AnimationNode(Node):
         height: int = DEFAULT_HEIGHT,
         name: str = "animation",
         queue_maxsize: int = 8,
+        stats_interval_s: float = 1.0,
         install_signal_handlers: bool = False,
     ) -> None:
         super().__init__(
@@ -83,6 +94,19 @@ class AnimationNode(Node):
         self._pending: "queue.Queue[tuple[str, str, int, dict]]" = queue.Queue(
             maxsize=queue_maxsize,
         )
+        # Telemetry. A host monitoring a face needs to know whether it is
+        # keeping up; that is a different question from what pixels it is
+        # showing, so it rides its own topic on a fixed low cadence.
+        self._stats_interval_s = float(stats_interval_s)
+        self._frames_emitted = 0
+        self._frames_dropped = 0
+        self._decode_ms_total = 0.0
+        self._decode_samples = 0
+        self._window_frames = 0
+        self._window_started = time.perf_counter()
+        self._fps_actual = 0.0
+        self._fps_target = 0.0
+        self._last_stats_at = 0.0
 
     # ── adapter registration ─────────────────────────────────────
 
@@ -126,6 +150,9 @@ class AnimationNode(Node):
         try:
             key, asset, duration_ms, params = self._pending.get(timeout=0.1)
         except queue.Empty:
+            # Idle is still worth reporting — a host must be able to tell
+            # "showing nothing" from "node is gone".
+            self._maybe_publish_stats()
             return
         self._play(key, asset, duration_ms, params)
 
@@ -182,6 +209,7 @@ class AnimationNode(Node):
         try:
             self._pending.put_nowait((key, asset, duration_ms, params))
         except queue.Full:
+            self._frames_dropped += 1
             self._log(f"queue full; dropped {key!r} clip {asset!r}")
 
     # ── playback ─────────────────────────────────────────────────
@@ -239,10 +267,13 @@ class AnimationNode(Node):
             elapsed = time.perf_counter() - self._started_at
             if cap_s is not None and elapsed >= cap_s:
                 return
+            t0 = time.perf_counter()
             frame = adapter.next_frame(elapsed)
+            self._decode_ms_total += (time.perf_counter() - t0) * 1000.0
+            self._decode_samples += 1
             if frame is None:
                 return
-            self._publish_frame(frame)
+            self._publish_frame(frame, is_media=is_media)
             wait_s = (frame.duration_ms or _DEFAULT_FRAME_MS) / 1000.0
             if self._stop_clip.wait(timeout=wait_s):
                 return
@@ -261,26 +292,76 @@ class AnimationNode(Node):
 
     # ── publishing ───────────────────────────────────────────────
 
-    def _publish_frame(self, frame: FrameBuffer) -> None:
+    def _publish_frame(self, frame: FrameBuffer, *, is_media: bool) -> None:
         """Publish one rendered frame.
 
-        NOTE: ``MediaFrame`` carries data/width/height only — the
-        contract has no field for per-frame duration or end-of-clip, so
-        pacing is not expressible on the bus today.  Subscribers that
-        need it must currently infer it.  Catalogued in
-        ``dev/docs/FRAMEWORK_NEEDS.md`` (FN-2); deliberately not worked
-        around here, because a private side-channel would be a second
-        copy of a truth the contract should own.
+        Two topics, deliberately: ``/sense/animation_frame`` carries the
+        FACE (with pacing — ``duration_ms``/``is_final``, which the
+        decoder genuinely knows), and ``/sense/media_frame`` carries
+        arbitrary media playback.  A renderer that only wants the face
+        subscribes to one and is never handed a movie.
         """
+        self._frames_emitted += 1
+        self._window_frames += 1
+        self._fps_target = (
+            1000.0 / frame.duration_ms if frame.duration_ms else 0.0
+        )
         try:
-            self.bus.publish(topics.MediaFrame(
-                data=bytes(frame.data),
-                width=frame.width,
-                height=frame.height,
+            if is_media:
+                self.bus.publish(topics.MediaFrame(
+                    data=bytes(frame.data),
+                    width=frame.width,
+                    height=frame.height,
+                    node_id=self.name,
+                ))
+            else:
+                self.bus.publish(topics.AnimationFrame(
+                    data=bytes(frame.data),
+                    width=frame.width,
+                    height=frame.height,
+                    duration_ms=frame.duration_ms,
+                    is_final=frame.is_final,
+                    seq=self._frames_emitted,
+                    node_id=self.name,
+                ))
+        except Exception:  # noqa: BLE001
+            # A publish hiccup must never break the render loop.
+            pass
+        self._maybe_publish_stats()
+
+    def _maybe_publish_stats(self) -> None:
+        """Emit telemetry on a fixed cadence, never per frame.
+
+        Per-frame stats would double the message rate of the thing they
+        are meant to measure."""
+        now = time.perf_counter()
+        if now - self._last_stats_at < self._stats_interval_s:
+            return
+        self._last_stats_at = now
+        window = now - self._window_started
+        if window > 0:
+            self._fps_actual = self._window_frames / window
+        self._window_frames = 0
+        self._window_started = now
+        mean_decode = (
+            self._decode_ms_total / self._decode_samples
+            if self._decode_samples else 0.0
+        )
+        try:
+            self.bus.publish(topics.AnimationStats(
+                adapter=self._active_key,
+                asset_path=self._active_asset,
+                width=self._width,
+                height=self._height,
+                fps_actual=round(self._fps_actual, 2),
+                fps_target=round(self._fps_target, 2),
+                frames_emitted=self._frames_emitted,
+                frames_dropped=self._frames_dropped,
+                decode_ms=round(mean_decode, 3),
+                queue_depth=self._pending.qsize(),
                 node_id=self.name,
             ))
         except Exception:  # noqa: BLE001
-            # A publish hiccup must never break the render loop.
             pass
 
     def _publish_state(self, key: str, asset: str, state: str, *,
@@ -315,11 +396,17 @@ def make_animation_node(bus: Any, config: dict | None = None) -> AnimationNode:
     editing to add one.  No decoding or file I/O happens here; that is
     what ``setup()`` and the first ``tick()`` are for.
     """
-    config = config or {}
+    from .config import AnimationConfig
+
+    # Validate through the module's own settings model, so a bad value
+    # fails here with a field name rather than deep in a render loop.
+    cfg = AnimationConfig(**(config or {}))
     node = AnimationNode(
         bus=bus,
-        width=int(config.get("width", DEFAULT_WIDTH)),
-        height=int(config.get("height", DEFAULT_HEIGHT)),
+        width=cfg.width,
+        height=cfg.height,
+        queue_maxsize=cfg.queue_maxsize,
+        stats_interval_s=cfg.stats_interval_s,
     )
     node.register_default_adapters()
     return node

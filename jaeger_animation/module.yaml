@@ -6,38 +6,44 @@ module: animation
 slot: animation
 version: 0.1.0
 
-# NOTE: `kind: processing` is NOT declared here.
-# ModuleSpec (jaeger_os/contract/modules.py) sets
-# forbid_unknown_fields=True and has no `kind` field yet, so declaring it
-# would fail strict discovery.  The template names it as a PLANNED field.
-# Recorded as FN-1 in dev/docs/FRAMEWORK_NEEDS.md rather than worked
-# around.  This module's kind, once the schema ships it, is `processing`:
-# software-only, touches topics and never devices.
+# The ownership axis (TAXONOMY.md "Module KINDS"): software-only,
+# touches topics and never devices. Orthogonal to `slot`, which says
+# what role this fills.
+kind: processing
 
 # /act/animation      — play a named clip through a named adapter (the face)
 # /act/animation_stop — interrupt whatever is playing
 # /act/media          — play an arbitrary file, adapter chosen by extension
 consumes: [/act/animation, /act/animation_stop, /act/media]
 
-# Rendered frames + playback state.  Frames go on /sense/media_frame
-# because that is the frame topic the shipped 0.9 contract has; see FN-2
-# in dev/docs/FRAMEWORK_NEEDS.md for why a dedicated animation-frame
-# topic would be better and what it would need to carry.
-produces: [/sense/media_frame, /sense/media_state, /sense/animation_state]
+# Pixels ride their OWN topic (with pacing — duration_ms/is_final, which
+# the decoder genuinely knows), so a renderer showing the face is never
+# handed a movie. Telemetry is separate again: monitoring whether a face
+# is keeping up must not require subscribing to its full pixel stream.
+produces:
+  - /sense/animation_frame
+  - /sense/animation_state
+  - /sense/animation_stats
+  - /sense/media_frame
+  - /sense/media_state
 
-# Honest-empty.  Driving the face from an agent (set_avatar_state,
-# play_timeline) means mapping an emotion to an asset — character data,
-# owned by the consumer, not by a persona-free engine.  A consumer
-# publishes /act/animation directly.
-tools: []
+# Agentic I/O — the same capability shaped for a model, alongside the
+# topics above which serve any consumer. Same two-surface pattern as
+# kokoro_tts (text_to_speech) and whisper_stt (listen).
+#
+# These are the MECHANISM ("play this asset through this adapter"),
+# deliberately persona-free. They are NOT set_avatar_state(emotion),
+# which needs a character's emotion->asset table and therefore belongs
+# to the consumer. Mechanism here, policy there.
+tools: [play_animation, stop_animation, play_media]
 
 factory: jaeger_animation:make_animation_node
 
-# No settings-catalog slice yet: geometry is passed per-instance through
-# the manifest's node config (width/height), which is where a face's size
-# belongs — it is a property of the display, not a global setting.
-# Declaring `config:` with no matching Pydantic model would be a schema
-# field with no validator behind it.
+# This module's group/key in the host's settings catalog — matches
+# AnimationConfig in config.py. A manifest may still override geometry
+# per [[node]], which is how one unit drives two displays at different
+# sizes from one module.
+config: animation
 
 # Probed with importlib.util.find_spec before this module's slot is
 # reported available.  Only TOP-LEVEL hard imports gate:

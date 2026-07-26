@@ -1,22 +1,18 @@
-"""FrameBuffer — the canonical RGBA frame format, owned by the media node.
+"""FrameBuffer — re-exported from the JaegerOS contract.
 
-Media is the asset->frame foundation other nodes build on: anything that turns
-an asset into frames (the media node's decoders, the animation node's adapters)
-produces these, so the bus + every renderer see one consistent shape.
+The type is contract-tier (``jaeger_os.contract.topics.FrameBuffer``)
+because every animation module produces it and the bus and every
+renderer have to agree on one shape. This module used to define its own
+copy, which made it the third in the ecosystem — exactly the "two copies
+of one truth" failure CONVENTIONS.md law 1 warns about.
+
+Kept as a module so the adapters' ``from ..frames import FrameBuffer``
+imports stay put, and so there is one obvious place to look for where
+the frame format is defined.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from jaeger_os.contract.topics import FrameBuffer
 
-
-@dataclass
-class FrameBuffer:
-    """One rendered frame. ``data`` is raw RGBA8 bytes (4 bytes/pixel,
-    row-major): width * height * 4 == len(data)."""
-
-    width: int
-    height: int
-    data: bytes  # RGBA8, w*h*4 bytes
-    duration_ms: int = 0  # how long this frame stays visible
-    is_final: bool = False  # last frame of a one-shot clip
+__all__ = ["FrameBuffer"]

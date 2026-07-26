@@ -136,6 +136,33 @@ new `AnimationFrame` topic would carry the pacing fields from the start.
 
 ---
 
+## FN-5 — discovery swallows a contributor's ImportError · degraded
+
+**Hit at:** the clean-venv gate, 2026-07-26.
+
+`jaeger_animation` failed to import (a missing transitive dependency).
+`discover_modules()` returned `{}` with **no message of any kind** — the
+module simply was not there, and `KeyError: 'animation'` at the call site
+was the only symptom. The cause took a manual `import jaeger_animation`
+to find.
+
+The fail-soft is deliberate and mostly right (`_external_module_roots`:
+*"one bad contributor, not fatal"*) — a package that is not installed
+must not take down discovery for everyone else. But an **installed**
+contributor whose entry point raises is a different case: that is a
+broken install, and it is invisible.
+
+Note the asymmetry: a malformed `module.yaml` inside a discovered root
+raises loudly, by design. An `ImportError` reaching the same root does
+not.
+
+**Cost to fix:** log the exception at WARNING in
+`_external_module_roots`'s `except`. Two lines. Optionally surface it in
+`jaeger doctor` as "installed but not loadable", which is exactly the
+class of failure an operator cannot otherwise diagnose.
+
+---
+
 ## Not gaps (checked, working as designed)
 
 - **Out-of-tree discovery via entry points** — `discover_modules()` finds

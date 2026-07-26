@@ -22,13 +22,20 @@ from __future__ import annotations
 __version__ = "0.1.0"
 
 from .base import AnimationAdapter
+from .config import AnimationConfig
 from .frames import FrameBuffer
 from .node import AnimationNode, make_animation_node
+from .tools import TOOLS, play_animation, play_media, stop_animation
 
 __all__ = [
     "AnimationAdapter",
+    "AnimationConfig",
     "AnimationNode",
     "FrameBuffer",
+    "TOOLS",
     "make_animation_node",
+    "play_animation",
+    "play_media",
+    "stop_animation",
     "__version__",
 ]
