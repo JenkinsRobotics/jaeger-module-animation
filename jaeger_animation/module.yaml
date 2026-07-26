@@ -53,3 +53,7 @@ config: animation
 # methods, so importing the package does not require them — deliberately
 # excluded, matching the call kokoro_tts and whisper_stt made.
 requires_libraries: [PIL, numpy]
+
+# Adapter types this module can play. A character names one per asset;
+# `mscript` is a SEQUENCE of the others rather than a format of its own.
+#   image  bitmap  sprite  gif  video  math  mscript

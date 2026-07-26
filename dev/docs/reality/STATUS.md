@@ -8,9 +8,9 @@ modified. Framework gaps hit along the way were built on JaegerOS branch
 
 ## Works — verified, not asserted
 
-- **All six adapters render** — `image` (incl. `.bmp`), `gif`, `sprite`,
+- **All seven adapter types render** — `image` (incl. `.bmp`), `gif`, `sprite`,
   `bitmap` (1-bit JSON), `math` (procedural scenes), `video` (with the
-  `[video]` extra). Verified at 8x8, 64x64 and 24x1: one asset, any
+  `[video]` extra), plus `mscript` sequences. Verified at 8x8, 64x64 and 24x1: one asset, any
   display geometry, which is the property the whole design rests on.
 - **The node** — `/act/animation` and `/act/media` in; `AnimationFrame`
   (with pacing), `AnimationState`, `AnimationStats`, `MediaFrame`,
@@ -42,7 +42,7 @@ modified. Framework gaps hit along the way were built on JaegerOS branch
 - **Sprite grid addressing** — `params={"cell": n, "grid": (cols, rows)}`,
   so a caller picks frame 12 of an evenly-cut sheet without pixel
   arithmetic. `src` rects still work for irregular atlases.
-- **94 tests pass.**
+- **105 tests pass.**
 
 ## Fixed since the first audit
 
@@ -69,13 +69,23 @@ rendered looked like one that finished.
 new adapter arrives without one.** Constructing an adapter proves
 nothing; that is what let three broken ones ship.
 
-## Not an adapter
+## Motion scripts
 
-`.mscript` is a **timeline DSL** — it sequences other assets
-(`MATH K[1] D[11.0] FG[...]`) rather than producing pixels. That is
-composition, which this engine deliberately leaves to the consumer, the
-same call made for `/act/timeline`. The parser and engine are vendored
-in `procedural/` but nothing here drives them.
+`.mscript` sequences other assets (`MATH K[1] D[11.0] FG[...]`) rather
+than producing pixels itself. `MScriptAdapter` plays one by binding each
+command to a real adapter and pumping frames from whichever is active —
+composition, not a second engine (a test asserts it contains no decoder).
+
+The reasoning: a character supplies motion scripts, or a caller sends a
+list of commands, and the node executes the sequence. The script is
+character content and playing content is this module's job. (Contrast
+`/act/timeline`, which coordinates animation WITH tts and motor — that
+is cross-module orchestration and still belongs to the consumer.)
+
+Verified against Mochi's real scripts: 6/6 play. One (`eyes.py`, via
+`demo_math_eyes_sequence`) needs >=64px width — a scene assuming a
+minimum size, not an engine fault; the engine raises naming the failure
+rather than rendering nothing.
 
 ## Not built
 

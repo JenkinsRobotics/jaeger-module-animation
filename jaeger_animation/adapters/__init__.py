@@ -7,7 +7,10 @@ Ported from Mochi (Apache-2.0), which is where this engine grew up.
 Two families, one Protocol:
 
 * **decoders** read a file — PNG, GIF, sprite sheet, bitmap, video.
-* **procedural** compute pixels — ``MathAdapter`` runs an MScript scene.
+* **procedural** compute pixels — ``MathAdapter`` runs a scene.
+* **sequence** — ``MScriptAdapter`` plays a motion script by driving the
+  others in turn. It decodes nothing itself; a character supplies the
+  script and the engine executes it.
 
 Procedural is the half that generalizes across geometry: a 720p GIF
 cannot meaningfully render on a 24x8 LED strip, but a procedural scene
@@ -21,6 +24,7 @@ from .bitmap_adapter import BitmapAdapter
 from .gif_adapter import GifAdapter
 from .image_adapter import ImageAdapter
 from .math_adapter import MathAdapter
+from .mscript_adapter import MScriptAdapter
 from .sprite_adapter import SpriteAdapter
 from .video_adapter import VideoAdapter
 
@@ -28,6 +32,7 @@ __all__ = [
     "BitmapAdapter",
     "GifAdapter",
     "ImageAdapter",
+    "MScriptAdapter",
     "MathAdapter",
     "SpriteAdapter",
     "VideoAdapter",
@@ -49,6 +54,9 @@ EXTENSION_MAP: dict[str, str] = {
     ".mp4": "video", ".mov": "video", ".mkv": "video", ".webm": "video",
     ".m4v": "video", ".avi": "video",
     ".py": "math",
+    # A motion script is a SEQUENCE of the assets above, not a format of
+    # its own — see mscript_adapter.
+    ".mscript": "mscript",
 }
 
 #: Adapter key -> class.  The one place the key strings are bound to
@@ -61,6 +69,7 @@ ADAPTERS: dict[str, type] = {
     "gif": GifAdapter,
     "video": VideoAdapter,
     "math": MathAdapter,
+    "mscript": MScriptAdapter,
 }
 
 

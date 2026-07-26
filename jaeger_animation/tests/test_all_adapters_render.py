@@ -116,7 +116,8 @@ def test_video_renders(assets, tmp_path):
 def test_every_declared_adapter_has_a_render_test():
     """A new adapter must arrive with proof it renders, not just that it
     constructs. Constructing is what let three broken ones ship."""
-    tested = {"image", "bitmap", "gif", "sprite", "math", "video"}
+    tested = {"image", "bitmap", "gif", "sprite", "math", "video",
+              "mscript"}  # mscript covered in test_mscript.py
     assert set(ADAPTERS) == tested, (
         f"adapters without a render test: {set(ADAPTERS) - tested}")
 
