@@ -186,6 +186,18 @@ healthy boot stays quiet.
 
 ---
 
+## Open elsewhere — not a framework gap
+
+- **The character pack format is not standardized.** AnimaCore's
+  `pack/v1` and this module's `character/v1` describe the same character
+  two ways, and neither loader reads the other's. That is a two-project
+  decision, not a JaegerOS one — see
+  `dev/docs/20260726_character_pack_standardization.md`. The `emotes`
+  pack is placed in both repos as the concrete case to standardize
+  against.
+
+---
+
 ## Not gaps (checked, working as designed)
 
 - **Out-of-tree discovery via entry points** — `discover_modules()` finds
