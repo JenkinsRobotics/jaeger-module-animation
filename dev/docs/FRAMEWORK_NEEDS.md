@@ -1,20 +1,32 @@
 # Framework needs — catalogued, not built
 
-> JaegerOS gaps this module hit while being built. **Nothing here is
-> implemented.** Operator instruction, 2026-07-25: framework changes get
-> catalogued, not built — we work solely in JaegerAnimation.
+> JaegerOS gaps this module hit while being built.
 >
-> Each entry records what was hit, what the module does instead, and what
-> it would cost to fix. The workaround is always the honest one — no
-> private side-channels that become a second copy of a truth the contract
-> should own.
+> Each entry records what was hit, what the module did instead, and what
+> it cost to fix. The workaround is always the honest one — no private
+> side-channels that become a second copy of a truth the contract should
+> own.
+
+**FN-1 through FN-4 are RESOLVED** — built on JaegerOS branch
+`jaeger-animation` (commit `d1fd56f`) after the operator lifted the
+catalogue-only instruction on 2026-07-26. They are kept here, not
+deleted, because the reasoning is the record of *why* those contract
+types exist. **FN-5 is open.**
+
+| | Gap | Status |
+|---|---|---|
+| FN-1 | `ModuleSpec.kind` | ✅ built |
+| FN-2 | frame pacing on the bus | ✅ built (`AnimationFrame`) |
+| FN-3 | `FrameBuffer` as a contract type | ✅ built |
+| FN-4 | animation frames need their own topic | ✅ built |
+| FN-5 | discovery swallows a contributor's ImportError | ⬜ open |
 
 Status key: **blocking** (module cannot do its job) · **degraded**
 (works, with a real limitation) · **cosmetic** (correctness unaffected).
 
 ---
 
-## FN-1 — `ModuleSpec` has no `kind:` field · cosmetic
+## FN-1 — `ModuleSpec` has no `kind:` field · cosmetic · ✅ RESOLVED
 
 **Hit at:** `jaeger_animation/module.yaml`
 
@@ -41,9 +53,14 @@ the four legal values. Contract-tier — needs sign-off per
 can eventually enforce "nothing outside a `driver`-kind module may open a
 device." That rule cannot be enforced against a comment.
 
+**Resolved:** `ModuleSpec.kind` added, defaulting empty so every existing
+manifest keeps validating, with `MODULE_KINDS` checked at load time so a
+bad value names the offending file. This module now declares
+`kind: processing`.
+
 ---
 
-## FN-2 — no frame topic carries pacing or end-of-clip · degraded
+## FN-2 — no frame topic carries pacing or end-of-clip · degraded · ✅ RESOLVED
 
 **Hit at:** `jaeger_animation/node.py::_publish_frame`
 
@@ -71,13 +88,13 @@ a real bus consumer needs it.
 `FM[hex]` for the LED matrix, and any Mochi window renderer that wants
 correct GIF timing.
 
-**Cost to fix:** two optional fields on `MediaFrame` (additive, no
-breaking change), or a dedicated `/sense/animation_frame` topic that
-mirrors `MediaFrame` plus pacing. The second is cleaner — see FN-4.
+**Resolved:** the second option — `/sense/animation_frame` carries
+`duration_ms` and `is_final`, and the envelope's `seq` lets a consumer
+detect drops. The node publishes it; the module contract test pins it.
 
 ---
 
-## FN-3 — `FrameBuffer` is not a contract type · degraded
+## FN-3 — `FrameBuffer` is not a contract type · degraded · ✅ RESOLVED
 
 **Hit at:** `jaeger_animation/frames.py`
 
@@ -106,13 +123,14 @@ producers import it. It imports nothing, so it cannot violate the
 contract package's no-inward-imports rule. Contract-tier — needs
 sign-off.
 
-**Note:** fixing this does *not* require JaegerAI to change. This module
-would adopt the contract type and its own copy disappears; JaegerAI can
-adopt whenever it chooses.
+**Resolved:** the dataclass now lives in `jaeger_os.contract.topics`.
+`jaeger_animation/frames.py` is a re-export, so copy 3 is gone. JaegerAI
+still has copies 1 and 2 and can adopt whenever it chooses — no change
+was required there, by design.
 
 ---
 
-## FN-4 — animation frames ride the media frame topic · cosmetic
+## FN-4 — animation frames ride the media frame topic · cosmetic · ✅ RESOLVED
 
 **Hit at:** `jaeger_animation/module.yaml` `produces:`
 
@@ -130,9 +148,9 @@ the frame topic.
 `/sense/media_frame`, and keeps the intents distinct on the state topics
 (`/sense/animation_state` vs `/sense/media_state`).
 
-**Cost to fix:** one constant + one `msgspec.Struct` +
-`TOPIC_TO_CLASS` registration. Naturally solved together with FN-2 — a
-new `AnimationFrame` topic would carry the pacing fields from the start.
+**Resolved together with FN-2.** `/act/animation` frames now go to
+`/sense/animation_frame` and `/act/media` frames to `/sense/media_frame`,
+so a renderer showing the face is never handed a movie.
 
 ---
 
@@ -167,10 +185,18 @@ class of failure an operator cannot otherwise diagnose.
 
 - **Out-of-tree discovery via entry points** — `discover_modules()` finds
   a module installed from its own repo through the
-  `jaeger_os.modules` entry-point group. Works; this module relies on it.
+  `jaeger_os.module_roots` entry-point group (the group takes a callable
+  returning roots; see `module_roots.py`). Works; this module relies on
+  it. See FN-5 for how it fails when the contributor cannot import.
 - **Per-instance geometry** — passing `width`/`height` through the
   manifest's node config is sufficient. A face's size is a property of
   its display, and the manifest is the right place to say so.
-- **No `config:` slice** — this module has no settings-catalog group, and
-  declaring one with no matching Pydantic model would be a schema field
-  with no validator behind it. Correctly omitted.
+
+**Corrected 2026-07-26:** this file previously listed "no `config:`
+slice" as *correctly omitted*, and the module shipped `tools: []`. Both
+were wrong, and neither was a framework gap — the three-surface
+convention (topics · tools · config) already shipped in 0.9 and both
+sibling engine modules follow it. `kokoro_tts` declares
+`text_to_speech` + `config: kokoro_tts`; `whisper_stt` declares `listen`
++ `config: whisper_stt`. This module now declares
+`play_animation`/`stop_animation`/`play_media` + `config: animation`.
