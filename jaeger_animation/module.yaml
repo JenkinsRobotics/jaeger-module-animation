@@ -1,0 +1,49 @@
+# module.yaml — what JaegerOS's discover_modules() reads to bind this
+# module into the slot system.  One copy of every truth: nothing else in
+# this repo restates what's declared here (CONVENTIONS.md law 1).
+
+module: animation
+slot: animation
+version: 0.1.0
+
+# NOTE: `kind: processing` is NOT declared here.
+# ModuleSpec (jaeger_os/contract/modules.py) sets
+# forbid_unknown_fields=True and has no `kind` field yet, so declaring it
+# would fail strict discovery.  The template names it as a PLANNED field.
+# Recorded as FN-1 in dev/docs/FRAMEWORK_NEEDS.md rather than worked
+# around.  This module's kind, once the schema ships it, is `processing`:
+# software-only, touches topics and never devices.
+
+# /act/animation      — play a named clip through a named adapter (the face)
+# /act/animation_stop — interrupt whatever is playing
+# /act/media          — play an arbitrary file, adapter chosen by extension
+consumes: [/act/animation, /act/animation_stop, /act/media]
+
+# Rendered frames + playback state.  Frames go on /sense/media_frame
+# because that is the frame topic the shipped 0.9 contract has; see FN-2
+# in dev/docs/FRAMEWORK_NEEDS.md for why a dedicated animation-frame
+# topic would be better and what it would need to carry.
+produces: [/sense/media_frame, /sense/media_state, /sense/animation_state]
+
+# Honest-empty.  Driving the face from an agent (set_avatar_state,
+# play_timeline) means mapping an emotion to an asset — character data,
+# owned by the consumer, not by a persona-free engine.  A consumer
+# publishes /act/animation directly.
+tools: []
+
+factory: jaeger_animation:make_animation_node
+
+# No settings-catalog slice yet: geometry is passed per-instance through
+# the manifest's node config (width/height), which is where a face's size
+# belongs — it is a property of the display, not a global setting.
+# Declaring `config:` with no matching Pydantic model would be a schema
+# field with no validator behind it.
+
+# Probed with importlib.util.find_spec before this module's slot is
+# reported available.  Only TOP-LEVEL hard imports gate:
+#   adapters/{image,gif,sprite}_adapter -> PIL
+#   adapters/{bitmap,sprite,math}_adapter, procedural/gfx -> numpy
+# video_adapter imports imageio + imageio_ffmpeg LAZILY inside its
+# methods, so importing the package does not require them — deliberately
+# excluded, matching the call kokoro_tts and whisper_stt made.
+requires_libraries: [PIL, numpy]

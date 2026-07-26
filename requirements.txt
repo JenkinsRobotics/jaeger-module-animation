@@ -1,0 +1,21 @@
+# JaegerAnimation runtime dependencies.
+#
+# The framework pin: this module builds on JaegerOS the way a ROS package
+# builds on ROS — pinned to a release, never forked. jaeger-os is not on
+# PyPI yet, so it's a git dependency (PEP 508 direct reference), matching
+# how JaegerKokoroTTS and JaegerWhisperSTT pin it.
+#
+# JaegerAI is deliberately ABSENT and must stay that way: a robot body has
+# to show a face with no AI product installed. Enforced by
+# jaeger_animation/tests/test_module_contract.py.
+jaeger-os @ git+https://github.com/JenkinsRobotics/JaegerOS@0.9.0
+
+# Decoders: PIL for image/gif/sprite, numpy for bitmap/sprite/math + the
+# procedural gfx layer. Both are top-level hard imports, so both are
+# declared in module.yaml's requires_libraries.
+pillow>=10.0
+numpy>=1.24
+
+# NOT listed: imageio / imageio-ffmpeg. video_adapter imports them lazily
+# inside its methods, so the package imports fine without them and only
+# video playback degrades. Install with: pip install "jaeger-animation[video]"

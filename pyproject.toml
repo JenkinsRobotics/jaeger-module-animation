@@ -1,0 +1,52 @@
+# JaegerAnimation — packaging + dev-tooling config.
+#
+# Modelled on JaegerKokoroTTS/JaegerWhisperSTT: editable install, version
+# single-sourced from the package's __init__.py, runtime deps from
+# requirements.txt.
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jaeger-animation"
+description = "The animation-slot engine module for the Jaeger ecosystem — asset and procedural rendering to RGBA frames on the bus. Persona-free, sink-agnostic, pins JaegerOS only."
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dynamic = ["version", "dependencies"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff"]
+# Video decoding is optional: video_adapter imports imageio lazily inside
+# its methods, so the package imports and every other adapter works
+# without these. A missing video codec must not cost you a face.
+video = ["imageio>=2.30", "imageio-ffmpeg>=0.4"]
+
+# The out-of-tree discover_modules() seam — see jaeger_animation/
+# module_roots.py. JaegerOS finds this WITHOUT ever naming
+# jaeger_animation; it only knows the group.
+[project.entry-points."jaeger_os.module_roots"]
+jaeger_animation = "jaeger_animation.module_roots:roots"
+
+[tool.setuptools.dynamic]
+version = { attr = "jaeger_animation.__version__" }
+dependencies = { file = ["requirements.txt"] }
+
+[tool.setuptools.packages.find]
+# The package lives at the repo root, not under src/.
+where = ["."]
+include = ["jaeger_animation*"]
+
+[tool.setuptools.package-data]
+# module.yaml and the default face MUST ship in a non-editable install —
+# without this, discover_modules() returns {} for a real install. This
+# exact bug bit JaegerAI's 0.9 from-scratch install pass; it is cheap to
+# declare and expensive to rediscover.
+jaeger_animation = ["module.yaml", "assets/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["jaeger_animation/tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"

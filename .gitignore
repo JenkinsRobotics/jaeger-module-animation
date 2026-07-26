@@ -65,3 +65,10 @@ htmlcov/
 # Real (non-example) config generated from the .example templates —
 # keep the templates tracked, never the filled-in versions.
 pyproject.toml
+
+# build artifacts
+*.egg-info/
+.pytest_cache/
+__pycache__/
+*.pyc
+.DS_Store
