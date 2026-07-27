@@ -184,10 +184,29 @@ def test_config_slice_matches_the_manifest():
 
 
 def test_kind_is_declared_and_legal():
+    """`engine`, not `processing`. This module is software-only and
+    touches no device — which is the PROCESSING description — but the
+    taxonomy names animation explicitly under ENGINE, and filling a
+    slot is the distinguishing property. A processing module is a
+    free-floating topic transform that no slot binds; this one IS the
+    animation slot."""
     from jaeger_os.contract.modules import MODULE_KINDS
 
-    assert MANIFEST["kind"] == "processing"
+    assert MANIFEST["kind"] == "engine"
     assert MANIFEST["kind"] in MODULE_KINDS
+    assert MANIFEST["slot"] == "animation"
+
+
+def test_every_declared_topic_obeys_the_path_grammar():
+    """A flat topic still resolves through the legacy passthrough, so
+    the contract check alone would not catch one left un-migrated."""
+    from jaeger_os.contract.paths import instance_of, parse
+
+    for topic in set(MANIFEST["consumes"]) | set(MANIFEST["produces"]):
+        parse(topic)
+        assert instance_of(topic) == "", (
+            f"{topic} names an instance; a manifest declares CANONICAL "
+            f"topics and the runtime binds instances")
 
 
 def test_telemetry_topic_is_separate_from_frames():

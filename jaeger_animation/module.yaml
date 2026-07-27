@@ -6,10 +6,16 @@ module: animation
 slot: animation
 version: 0.1.0
 
-# The ownership axis (TAXONOMY.md "Module KINDS"): software-only,
-# touches topics and never devices. Orthogonal to `slot`, which says
-# what role this fills.
-kind: processing
+# The OWNERSHIP axis (TAXONOMY.md "Module KINDS") — orthogonal to
+# `slot`, which says what ROLE this fills.
+#
+# `engine`, not `processing`. This module is software-only and touches
+# no device, which is the PROCESSING description — but the taxonomy
+# names animation explicitly under ENGINE ("fills a capability slot:
+# tts, stt, animation"), and filling a slot is the distinguishing
+# property. A processing module is a free-floating topic transform (a
+# codec, a VAD) that no slot binds; this one IS the animation slot.
+kind: engine
 
 # /act/display/play — play an asset through an adapter. One command for
 #                     both the face and arbitrary media: the adapter
