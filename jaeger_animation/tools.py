@@ -1,7 +1,7 @@
 """Agentic I/O — the same capability, shaped for a model.
 
 A module exposes two surfaces over one engine.  The **topics** serve any
-consumer: publish an ``AnimationCommand`` and frames come back, exactly
+consumer: publish an ``DisplayCommand`` and frames come back, exactly
 as a plain Python project or a ROS-style control loop would want.  The
 **tools** here serve an *agent*: named, described, coarse-grained, with
 results phrased for a language model rather than a control loop.
@@ -78,7 +78,7 @@ def play_animation(
     if height:
         params["height"] = int(height)
 
-    cmd = topics.AnimationCommand(
+    cmd = topics.DisplayCommand(
         adapter=key or "image",
         asset_path=asset,
         duration_ms=int(duration_ms),
@@ -89,7 +89,7 @@ def play_animation(
         bus = _bus()
         if wait:
             ack = bus.request(
-                cmd, topics.SENSE_ANIMATION_STATE, timeout_s=_ACK_TIMEOUT_S)
+                cmd, topics.ACT_DISPLAY_STATE, timeout_s=_ACK_TIMEOUT_S)
             if ack is None:
                 return {"ok": False, "asset": asset,
                         "reason": "no acknowledgement from the animation node"}
@@ -108,7 +108,7 @@ def stop_animation() -> dict[str, Any]:
       ``{"ok": bool, "reason": str|None}``
     """
     try:
-        _bus().publish(topics.AnimationStop())
+        _bus().publish(topics.DisplayStop())
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
     return {"ok": True}
@@ -128,7 +128,7 @@ def play_media(path: str = "", loop: bool = False) -> dict[str, Any]:
     if not target:
         return {"ok": False, "reason": "path required"}
     try:
-        _bus().publish(topics.MediaCommand(path=target, loop=bool(loop)))
+        _bus().publish(topics.DisplayCommand(path=target, loop=bool(loop)))
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "path": target,
                 "reason": f"{type(exc).__name__}: {exc}"}

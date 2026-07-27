@@ -12,9 +12,9 @@ modified. Framework gaps hit along the way were built on JaegerOS branch
   `bitmap` (1-bit JSON), `math` (procedural scenes), `video` (with the
   `[video]` extra), plus `mscript` sequences. Verified at 8x8, 64x64 and 24x1: one asset, any
   display geometry, which is the property the whole design rests on.
-- **The node** — `/act/animation` and `/act/media` in; `AnimationFrame`
-  (with pacing), `AnimationState`, `AnimationStats`, `MediaFrame`,
-  `MediaState` out. No renderer inside, no frame callback.
+- **The node** — `/act/display/play` and `/act/display/play` in; `DisplayFrame`
+  (with pacing), `DisplayState`, `DisplayStats`, `DisplayFrame`,
+  `DisplayState` out. No renderer inside, no frame callback.
 - **Three declared surfaces** — topics, tools (`play_animation`,
   `stop_animation`, `play_media`), and a `config:` slice, matching what
   `kokoro_tts` and `whisper_stt` ship.
@@ -79,7 +79,7 @@ composition, not a second engine (a test asserts it contains no decoder).
 The reasoning: a character supplies motion scripts, or a caller sends a
 list of commands, and the node executes the sequence. The script is
 character content and playing content is this module's job. (Contrast
-`/act/timeline`, which coordinates animation WITH tts and motor — that
+`/act/timeline/run`, which coordinates animation WITH tts and motor — that
 is cross-module orchestration and still belongs to the consumer.)
 
 Verified against Mochi's real scripts: 6/6 play. One (`eyes.py`, via

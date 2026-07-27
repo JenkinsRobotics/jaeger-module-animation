@@ -119,11 +119,11 @@ def test_produced_topics_match_what_the_node_publishes() -> None:
     so it must not drift from the code."""
     src = (PACKAGE / "node.py").read_text()
     for symbol, topic in (
-        ("AnimationFrame", "/sense/animation_frame"),
-        ("AnimationState", "/sense/animation_state"),
-        ("AnimationStats", "/sense/animation_stats"),
-        ("MediaFrame", "/sense/media_frame"),
-        ("MediaState", "/sense/media_state"),
+        ("DisplayFrame", "/act/display/frame"),
+        ("DisplayState", "/act/display/state"),
+        ("DisplayStats", "/act/display/stats"),
+        ("DisplayFrame", "/act/display/frame"),
+        ("DisplayState", "/act/display/state"),
     ):
         assert f"topics.{symbol}(" in src, f"node never publishes {symbol}"
         assert topic in MANIFEST["produces"], f"{topic} missing from manifest"
@@ -195,5 +195,5 @@ def test_telemetry_topic_is_separate_from_frames():
     to its full pixel stream."""
     from jaeger_os.transport import topics
 
-    assert topics.SENSE_ANIMATION_STATS in MANIFEST["produces"]
-    assert topics.SENSE_ANIMATION_FRAME in MANIFEST["produces"]
+    assert topics.ACT_DISPLAY_STATS in MANIFEST["produces"]
+    assert topics.ACT_DISPLAY_FRAME in MANIFEST["produces"]

@@ -34,13 +34,13 @@ class AnimationConfig(BaseModel):
     #: the gap for procedural scenes with no intrinsic rate.
     default_fps: int = Field(30, ge=1, le=240)
 
-    #: How often render telemetry goes out on /sense/animation_stats.
+    #: How often render telemetry goes out on /act/display/stats.
     #: Never per frame: that would double the message rate of the thing
     #: it is measuring.
     stats_interval_s: float = Field(1.0, ge=0.1, le=60.0)
 
     #: How many play commands may queue before new ones are dropped
-    #: (and counted in AnimationStats.frames_dropped). Small on purpose:
+    #: (and counted in DisplayStats.frames_dropped). Small on purpose:
     #: a face should show the newest thing asked of it, not work through
     #: a backlog.
     queue_maxsize: int = Field(8, ge=1, le=256)

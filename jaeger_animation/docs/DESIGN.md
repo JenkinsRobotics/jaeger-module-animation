@@ -20,9 +20,9 @@ to show a face with no AI product installed. Enforced structurally by
 **The engine's job ends at frames on a topic.**
 
 ```
-/act/animation      ─┐                    ┌─▶ /sense/media_frame
-/act/animation_stop ─┼─▶  AnimationNode  ─┼─▶ /sense/animation_state
-/act/media          ─┘                    └─▶ /sense/media_state
+/act/display/play      ─┐                    ┌─▶ /act/display/frame
+/act/display/stop ─┼─▶  AnimationNode  ─┼─▶ /act/display/state
+/act/display/play          ─┘                    └─▶ /act/display/state
                                 │
         ┌───────────────────────┼───────────────────────┐
         ▼                       ▼                       ▼
@@ -110,7 +110,7 @@ share code.
 Recorded honestly rather than worked around. Full detail in
 [`dev/docs/FRAMEWORK_NEEDS.md`](../../dev/docs/FRAMEWORK_NEEDS.md).
 
-- **Frame pacing is not expressible on the bus** (FN-2). `MediaFrame`
+- **Frame pacing is not expressible on the bus** (FN-2). `DisplayFrame`
   carries no `duration_ms`/`is_final`, so a bus subscriber must guess a
   frame rate. The player is unaffected because it drives adapters
   directly.

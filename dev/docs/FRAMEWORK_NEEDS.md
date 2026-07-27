@@ -19,7 +19,7 @@ hit — see JaegerOS `dev/docs/roadmap/20260726_ros_parity_review.md`.
 | | Gap | Status |
 |---|---|---|
 | FN-1 | `ModuleSpec.kind` | ✅ built |
-| FN-2 | frame pacing on the bus | ✅ built (`AnimationFrame`) |
+| FN-2 | frame pacing on the bus | ✅ built (`DisplayFrame`) |
 | FN-3 | `FrameBuffer` as a contract type | ✅ built |
 | FN-4 | animation frames need their own topic | ✅ built |
 | FN-5 | discovery swallows a contributor's ImportError | ✅ built |
@@ -67,7 +67,7 @@ bad value names the offending file. This module now declares
 
 **Hit at:** `jaeger_animation/node.py::_publish_frame`
 
-`MediaFrame` (the only frame topic in the 0.9 contract) carries
+`DisplayFrame` (the only frame topic in the 0.9 contract) carries
 `data`, `width`, `height`. It has no field for:
 
 - **`duration_ms`** — how long this frame should stay visible
@@ -79,10 +79,10 @@ dropped at the bus boundary.
 
 **Consequence:** a subscriber cannot pace playback from the bus alone. It
 must guess a frame rate, or infer the end of a clip from the separate
-`/sense/media_state` topic — which is a different message with no
+`/act/display/state` topic — which is a different message with no
 ordering guarantee relative to the frames it describes.
 
-**What this module does instead:** publishes `MediaFrame` and drops the
+**What this module does instead:** publishes `DisplayFrame` and drops the
 two fields. The standalone player (`play.py`) drives adapters directly,
 so it is unaffected — which is exactly why the gap is easy to miss until
 a real bus consumer needs it.
@@ -91,7 +91,7 @@ a real bus consumer needs it.
 `FM[hex]` for the LED matrix, and any Mochi window renderer that wants
 correct GIF timing.
 
-**Resolved:** the second option — `/sense/animation_frame` carries
+**Resolved:** the second option — `/act/display/frame` carries
 `duration_ms` and `is_final`, and the envelope's `seq` lets a consumer
 detect drops. The node publishes it; the module contract test pins it.
 
@@ -137,9 +137,9 @@ was required there, by design.
 
 **Hit at:** `jaeger_animation/module.yaml` `produces:`
 
-The contract has `/act/animation` and `/sense/animation_state` but **no
+The contract has `/act/display/play` and `/act/display/state` but **no
 animation frame topic** — animation state has a topic, animation pixels
-do not. So rendered frames go out on `/sense/media_frame` regardless of
+do not. So rendered frames go out on `/act/display/frame` regardless of
 which intent produced them.
 
 **Consequence:** a subscriber that only wants the face must filter frames
@@ -148,11 +148,11 @@ intents are distinguishable on the command and state topics but not on
 the frame topic.
 
 **What this module does instead:** publishes every frame on
-`/sense/media_frame`, and keeps the intents distinct on the state topics
-(`/sense/animation_state` vs `/sense/media_state`).
+`/act/display/frame`, and keeps the intents distinct on the state topics
+(`/act/display/state` vs `/act/display/state`).
 
-**Resolved together with FN-2.** `/act/animation` frames now go to
-`/sense/animation_frame` and `/act/media` frames to `/sense/media_frame`,
+**Resolved together with FN-2.** `/act/display/play` frames now go to
+`/act/display/frame` and `/act/display/play` frames to `/act/display/frame`,
 so a renderer showing the face is never handed a movie.
 
 ---

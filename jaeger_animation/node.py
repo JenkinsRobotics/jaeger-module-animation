@@ -1,10 +1,8 @@
 """AnimationNode — decode/render an asset, publish frames on the bus.
 
-    /act/animation      ─┐                    ┌─▶ /sense/animation_frame
-    /act/animation_stop ─┼─▶  AnimationNode  ─┼─▶ /sense/animation_state
-    /act/media          ─┘                    ├─▶ /sense/animation_stats
-                                              ├─▶ /sense/media_frame
-                                              └─▶ /sense/media_state
+    /act/display/play ─┐                    ┌─▶ /act/display/frame
+                       ├─▶  AnimationNode  ─┼─▶ /act/display/state
+    /act/display/stop ─┘                    └─▶ /act/display/stats
 
 **The node's job ends at frames on a topic.**  It has no renderer, no
 frame callback, no idea whether anything is listening.  A desktop window,
@@ -12,24 +10,22 @@ a web canvas, and a driver re-encoding for a 64x64 LED matrix all
 subscribe the same way — which is the entire reason one engine can serve
 a virtual companion and a physical robot without forking.
 
-Two intents, one engine:
-
-* ``/act/animation`` — play a named clip through a named adapter.  This
-  is the face: an avatar expression, an eye state, a procedural scene.
-* ``/act/media`` — play an arbitrary file, adapter chosen by extension.
-
-Both decode through the same adapters, but land on different frame
-topics, so a renderer that only wants the FACE never has a movie handed
-to it.
+One command covers both intents — an avatar expression and an arbitrary
+movie.  ``adapter`` names the decoder, or ``"auto"`` picks it from the
+file extension.  There used to be two of everything here (an
+``/act/animation`` set and an ``/act/media`` set) so that a renderer
+showing the face was never handed a movie; the instance segment does
+that now, and ``/act/display/face0/`` and ``/act/display/media0/`` are
+different prefixes to a subscriber.
 
 **The module declares its whole I/O surface.** The framework provides
 pub/sub; deciding what a host can drive and monitor is the module's job.
 So alongside pixels and playback state it publishes
-``/sense/animation_stats`` — measured framerate against the clip's
-target, frames emitted and dropped, mean decode time, queue depth — on a
-fixed low cadence, never per frame. Telemetry rides its own topic
-because monitoring a face's health must not require subscribing to its
-full pixel stream.
+``/act/display/stats`` — measured framerate against the clip's target,
+frames emitted and dropped, mean decode time, queue depth — on a fixed
+low cadence, never per frame. Telemetry rides its own topic because
+monitoring a face's health must not require subscribing to its full
+pixel stream, which at 4K would be ~1 GB/s.
 
 Threading: subscriber callbacks only enqueue.  All decoding happens in
 ``tick()`` on the node's own thread, because blocking the bus delivery
@@ -111,7 +107,7 @@ class AnimationNode(Node):
     # ── adapter registration ─────────────────────────────────────
 
     def register_adapter(self, key: str, adapter: AnimationAdapter) -> None:
-        """Bind ``key`` (as named in an AnimationCommand) to an adapter."""
+        """Bind ``key`` (as named in an DisplayCommand) to an adapter."""
         self._adapters[key] = adapter
 
     def register_default_adapters(self) -> None:
@@ -136,12 +132,11 @@ class AnimationNode(Node):
     # ── lifecycle ────────────────────────────────────────────────
 
     def setup(self) -> None:
-        self.bus.subscribe(topics.ACT_ANIMATION, self._on_animation)
-        self.bus.subscribe(topics.ACT_ANIMATION_STOP, self._on_stop)
-        self.bus.subscribe(topics.ACT_MEDIA, self._on_media)
+        self.bus.subscribe(topics.ACT_DISPLAY_PLAY, self._on_play)
+        self.bus.subscribe(topics.ACT_DISPLAY_STOP, self._on_stop)
         self._log(
-            f"subscribed: {topics.ACT_ANIMATION}, "
-            f"{topics.ACT_ANIMATION_STOP}, {topics.ACT_MEDIA} "
+            f"subscribed: {topics.ACT_DISPLAY_PLAY}, "
+            f"{topics.ACT_DISPLAY_STOP} "
             f"@ {self._width}x{self._height}; "
             f"adapters={list(self.known_adapters())}"
         )
@@ -158,9 +153,8 @@ class AnimationNode(Node):
 
     def teardown(self) -> None:
         for topic, handler in (
-            (topics.ACT_ANIMATION, self._on_animation),
-            (topics.ACT_ANIMATION_STOP, self._on_stop),
-            (topics.ACT_MEDIA, self._on_media),
+            (topics.ACT_DISPLAY_PLAY, self._on_play),
+            (topics.ACT_DISPLAY_STOP, self._on_stop),
         ):
             try:
                 self.bus.unsubscribe(topic, handler)
@@ -179,24 +173,25 @@ class AnimationNode(Node):
 
     # ── subscribers (enqueue only — never decode here) ───────────
 
-    def _on_animation(self, msg: Any) -> None:
-        params = dict(getattr(msg, "params", None) or {})
-        self._enqueue(
-            key=getattr(msg, "adapter", "") or "image",
-            asset=getattr(msg, "asset_path", "") or "",
-            duration_ms=int(getattr(msg, "duration_ms", 0) or 0),
-            params=params,
-        )
+    def _on_play(self, msg: Any) -> None:
+        """One handler for every play request.
 
-    def _on_media(self, msg: Any) -> None:
-        path = getattr(msg, "path", "") or ""
-        if not path:
+        There were two — one for the face, one for arbitrary media —
+        back when they were separate topics.  The only thing the media
+        path actually did differently was pick its adapter from the
+        file extension, which is now what ``adapter="auto"`` means.
+        """
+        asset = getattr(msg, "asset_path", "") or ""
+        if not asset:
             return
+        key = getattr(msg, "adapter", "") or "auto"
+        if key == "auto":
+            key = adapter_for_path(asset)
         self._enqueue(
-            key=adapter_for_path(path),
-            asset=path,
-            duration_ms=0,
-            params={"loop": bool(getattr(msg, "loop", True)), "_media": True},
+            key=key,
+            asset=asset,
+            duration_ms=int(getattr(msg, "duration_ms", 0) or 0),
+            params=dict(getattr(msg, "params", None) or {}),
         )
 
     def _on_stop(self, msg: Any) -> None:
@@ -216,11 +211,10 @@ class AnimationNode(Node):
 
     def _play(self, key: str, asset: str, duration_ms: int,
               params: dict) -> None:
-        is_media = bool(params.pop("_media", False))
         adapter = self._adapters.get(key)
         if adapter is None:
             self._log(f"unknown adapter {key!r}; skipping {asset!r}")
-            self._publish_state(key, asset, "idle", is_media=is_media,
+            self._publish_state(key, asset, "idle",
                                 reason="unknown adapter")
             return
 
@@ -236,7 +230,7 @@ class AnimationNode(Node):
             # as it was.
             self._log(f"open failed for {asset!r}: "
                       f"{type(exc).__name__}: {exc}")
-            self._publish_state(key, asset, "idle", is_media=is_media,
+            self._publish_state(key, asset, "idle",
                                 reason=f"{type(exc).__name__}: {exc}")
             return
 
@@ -245,19 +239,18 @@ class AnimationNode(Node):
         self._active_asset = asset
         self._started_at = time.perf_counter()
         self._stop_clip.clear()
-        self._publish_state(key, asset, "playing", is_media=is_media)
+        self._publish_state(key, asset, "playing")
 
         try:
-            self._stream(adapter, duration_ms, is_media=is_media)
+            self._stream(adapter, duration_ms)
         except Exception as exc:  # noqa: BLE001
             self._log(f"stream error on {asset!r}: "
                       f"{type(exc).__name__}: {exc}")
 
         self._close_active()
-        self._publish_state(key, asset, "idle", is_media=is_media)
+        self._publish_state(key, asset, "idle")
 
-    def _stream(self, adapter: AnimationAdapter, duration_ms: int, *,
-                is_media: bool) -> None:
+    def _stream(self, adapter: AnimationAdapter, duration_ms: int) -> None:
         """Emit frames until the clip ends, a stop arrives, the node
         stops, or ``duration_ms`` elapses."""
         cap_s = duration_ms / 1000.0 if duration_ms else None
@@ -273,7 +266,7 @@ class AnimationNode(Node):
             self._decode_samples += 1
             if frame is None:
                 return
-            self._publish_frame(frame, is_media=is_media)
+            self._publish_frame(frame)
             wait_s = (frame.duration_ms or _DEFAULT_FRAME_MS) / 1000.0
             if self._stop_clip.wait(timeout=wait_s):
                 return
@@ -292,14 +285,18 @@ class AnimationNode(Node):
 
     # ── publishing ───────────────────────────────────────────────
 
-    def _publish_frame(self, frame: FrameBuffer, *, is_media: bool) -> None:
+    def _publish_frame(self, frame: FrameBuffer) -> None:
         """Publish one rendered frame.
 
-        Two topics, deliberately: ``/sense/animation_frame`` carries the
-        FACE (with pacing — ``duration_ms``/``is_final``, which the
-        decoder genuinely knows), and ``/sense/media_frame`` carries
-        arbitrary media playback.  A renderer that only wants the face
-        subscribes to one and is never handed a movie.
+        Carries the pacing the decoder genuinely knows —
+        ``duration_ms`` and ``is_final`` — so a subscriber never has to
+        guess a frame rate or infer the end of a clip from a separate
+        topic with no ordering guarantee.
+
+        ``frame.data`` is handed over WITHOUT copying.  FrameBuffer is
+        immutable by convention and every adapter builds a fresh buffer
+        per frame, so a defensive ``bytes(...)`` here would duplicate
+        the largest object in the system on the hottest path.
         """
         self._frames_emitted += 1
         self._window_frames += 1
@@ -307,23 +304,15 @@ class AnimationNode(Node):
             1000.0 / frame.duration_ms if frame.duration_ms else 0.0
         )
         try:
-            if is_media:
-                self.bus.publish(topics.MediaFrame(
-                    data=bytes(frame.data),
-                    width=frame.width,
-                    height=frame.height,
-                    node_id=self.name,
-                ))
-            else:
-                self.bus.publish(topics.AnimationFrame(
-                    data=bytes(frame.data),
-                    width=frame.width,
-                    height=frame.height,
-                    duration_ms=frame.duration_ms,
-                    is_final=frame.is_final,
-                    seq=self._frames_emitted,
-                    node_id=self.name,
-                ))
+            self.bus.publish(topics.DisplayFrame(
+                data=frame.data,
+                width=frame.width,
+                height=frame.height,
+                duration_ms=frame.duration_ms,
+                is_final=frame.is_final,
+                seq=self._frames_emitted,
+                node_id=self.name,
+            ))
         except Exception:  # noqa: BLE001
             # A publish hiccup must never break the render loop.
             pass
@@ -348,7 +337,7 @@ class AnimationNode(Node):
             if self._decode_samples else 0.0
         )
         try:
-            self.bus.publish(topics.AnimationStats(
+            self.bus.publish(topics.DisplayStats(
                 adapter=self._active_key,
                 asset_path=self._active_asset,
                 width=self._width,
@@ -364,27 +353,20 @@ class AnimationNode(Node):
         except Exception:  # noqa: BLE001
             pass
 
-    def _publish_state(self, key: str, asset: str, state: str, *,
-                       is_media: bool, reason: str = "") -> None:
+    def _publish_state(self, key: str, asset: str, state: str,
+                       reason: str = "") -> None:
         try:
-            if is_media:
-                self.bus.publish(topics.MediaState(
-                    path=asset,
-                    kind=key,
-                    playing=(state == "playing"),
-                    node_id=self.name,
-                ))
-            else:
-                self.bus.publish(topics.AnimationState(
-                    adapter=key,
-                    asset_path=asset,
-                    state=state,
-                    progress=1.0 if state == "idle" else 0.0,
-                    elapsed_ms=int(
-                        (time.perf_counter() - self._started_at) * 1000
-                    ) if self._started_at else 0,
-                    node_id=self.name,
-                ))
+            self.bus.publish(topics.DisplayState(
+                adapter=key,
+                asset_path=asset,
+                state=state,
+                progress=1.0 if state == "idle" else 0.0,
+                elapsed_ms=int(
+                    (time.perf_counter() - self._started_at) * 1000
+                ) if self._started_at else 0,
+                reason=reason,
+                node_id=self.name,
+            ))
         except Exception:  # noqa: BLE001
             pass
 

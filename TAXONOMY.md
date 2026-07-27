@@ -90,8 +90,8 @@ coexist, ANY-OF readiness).
   module: kokoro_tts
   slot: tts
   version: 1.0.0
-  consumes: [/act/speech, /act/speech_stop]
-  produces: [/sense/spoken, /sense/tts_chunk]
+  consumes: [/act/speech, /act/speech/stop]
+  produces: [/act/speech/spoken, /act/speech/chunk]
   tools: [text_to_speech]
   factory: jaeger_kokoro_tts.nodes.kokoro_tts:make_tts_node
   config: kokoro_tts
@@ -127,7 +127,7 @@ MIND          the agent itself — singleton, slot mind.
 ```
 
 - **DRIVER** — e.g. a `usb_camera` module publishing
-  `/sense/camera_frame`. Its whole job is standardizing the topic so
+  `/sense/camera/image_raw`. Its whole job is standardizing the topic so
   any camera in that family is interchangeable underneath it. The
   rule this kind exists to enforce: **nothing outside a driver-kind
   module may open a device.**

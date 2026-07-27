@@ -79,7 +79,7 @@ class ImageAdapter:
         so the AnimationNode's stream loop drops back to the
         operator-specified ``duration_ms`` cap.
 
-        A non-zero ``duration_ms`` on the AnimationCommand keeps
+        A non-zero ``duration_ms`` on the DisplayCommand keeps
         the same image visible for that long; without it, this
         adapter emits one frame and ends — typically the brain
         publishes a follow-up command (a different image or an

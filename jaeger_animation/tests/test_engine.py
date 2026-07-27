@@ -105,18 +105,18 @@ def test_node_publishes_frames_on_the_bus(bus, png):
     """Frames reach ANY subscriber. This is what lets a window and an
     LED matrix render from one engine."""
     frames = []
-    bus.subscribe(topics.SENSE_ANIMATION_FRAME, frames.append)
+    bus.subscribe(topics.ACT_DISPLAY_FRAME, frames.append)
 
     node = make_animation_node(bus, {"width": 16, "height": 16})
     t = _run(node)
     try:
-        bus.publish(topics.AnimationCommand(
+        bus.publish(topics.DisplayCommand(
             adapter="image", asset_path=png, duration_ms=100))
         assert _wait_for(lambda: frames), "no frame published"
         f = frames[0]
         assert (f.width, f.height) == (16, 16)
         assert len(f.data) == 16 * 16 * 4
-        # The whole reason /sense/animation_frame exists: a subscriber
+        # The whole reason /act/display/frame exists: a subscriber
         # gets pacing and end-of-clip without guessing.
         assert hasattr(f, "duration_ms") and hasattr(f, "is_final")
         assert f.seq >= 1
@@ -127,12 +127,12 @@ def test_node_publishes_frames_on_the_bus(bus, png):
 
 def test_node_reports_playing_then_idle(bus, png):
     states = []
-    bus.subscribe(topics.SENSE_ANIMATION_STATE, states.append)
+    bus.subscribe(topics.ACT_DISPLAY_STATE, states.append)
 
     node = make_animation_node(bus, {"width": 8, "height": 8})
     t = _run(node)
     try:
-        bus.publish(topics.AnimationCommand(
+        bus.publish(topics.DisplayCommand(
             adapter="image", asset_path=png, duration_ms=50))
         assert _wait_for(lambda: any(s.state == "idle" for s in states))
         assert [s.state for s in states][:2] == ["playing", "idle"]
@@ -142,20 +142,33 @@ def test_node_reports_playing_then_idle(bus, png):
         t.join(timeout=2)
 
 
-def test_media_intent_publishes_media_state(bus, gif):
-    """/act/media and /act/animation share the engine but stay distinct
-    intents: 'play this movie' vs 'make the face do this'."""
-    media_states = []
-    frames = []
-    bus.subscribe(topics.SENSE_MEDIA_STATE, media_states.append)
-    bus.subscribe(topics.SENSE_MEDIA_FRAME, frames.append)
+def test_auto_adapter_is_chosen_from_the_extension(bus, gif):
+    """"Play this movie" and "make the face do this" were once separate
+    topics carrying separate message types. The only behavioural
+    difference was that the media one picked its decoder from the file
+    extension — which is what ``adapter="auto"`` does now.
+
+    This matters more than it looks: the default IS auto, so a caller
+    who names no adapter gets the right one. Getting it wrong is silent
+    — a .gif through the image adapter renders one motionless frame and
+    reports no error at all."""
+    states, frames = [], []
+    bus.subscribe(topics.ACT_DISPLAY_STATE, states.append)
+    bus.subscribe(topics.ACT_DISPLAY_FRAME, frames.append)
 
     node = make_animation_node(bus, {"width": 8, "height": 8})
     t = _run(node)
     try:
-        bus.publish(topics.MediaCommand(path=gif, loop=False))
-        assert _wait_for(lambda: frames), "no frames from /act/media"
-        assert _wait_for(lambda: any(s.playing for s in media_states))
+        # No adapter named at all — the default must resolve to "gif".
+        bus.publish(topics.DisplayCommand(asset_path=gif))
+        assert _wait_for(lambda: frames), "no frames from an auto-routed gif"
+        assert _wait_for(lambda: any(s.state == "playing" for s in states))
+        assert any(s.adapter == "gif" for s in states), (
+            f"auto picked {[s.adapter for s in states]}, not the gif adapter")
+        # Wait for a SECOND frame rather than checking straight away —
+        # the first assertion above returns the instant frame 1 lands.
+        assert _wait_for(lambda: len(frames) > 1), \
+            "decoded as a still image, not an animation"
     finally:
         node.stop()
         t.join(timeout=2)
@@ -165,7 +178,7 @@ def test_unknown_adapter_does_not_kill_the_node(bus, png):
     node = make_animation_node(bus, {})
     t = _run(node)
     try:
-        bus.publish(topics.AnimationCommand(
+        bus.publish(topics.DisplayCommand(
             adapter="nonexistent", asset_path=png))
         time.sleep(0.3)
         assert node.state.name == "RUNNING"
@@ -180,7 +193,7 @@ def test_missing_asset_does_not_kill_the_node(bus):
     node = make_animation_node(bus, {})
     t = _run(node)
     try:
-        bus.publish(topics.AnimationCommand(
+        bus.publish(topics.DisplayCommand(
             adapter="image", asset_path="/nonexistent/nope.png"))
         time.sleep(0.3)
         assert node.state.name == "RUNNING"
@@ -191,15 +204,15 @@ def test_missing_asset_does_not_kill_the_node(bus):
 
 def test_stop_interrupts_a_running_clip(bus, gif):
     frames = []
-    bus.subscribe(topics.SENSE_ANIMATION_FRAME, frames.append)
+    bus.subscribe(topics.ACT_DISPLAY_FRAME, frames.append)
 
     node = make_animation_node(bus, {"width": 8, "height": 8})
     t = _run(node)
     try:
-        bus.publish(topics.AnimationCommand(
+        bus.publish(topics.DisplayCommand(
             adapter="gif", asset_path=gif, params={"loop": True}))
         assert _wait_for(lambda: frames)
-        bus.publish(topics.AnimationStop())
+        bus.publish(topics.DisplayStop())
         time.sleep(0.3)
         settled = len(frames)
         time.sleep(0.3)

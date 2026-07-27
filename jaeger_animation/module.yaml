@@ -11,21 +11,25 @@ version: 0.1.0
 # what role this fills.
 kind: processing
 
-# /act/animation      — play a named clip through a named adapter (the face)
-# /act/animation_stop — interrupt whatever is playing
-# /act/media          — play an arbitrary file, adapter chosen by extension
-consumes: [/act/animation, /act/animation_stop, /act/media]
+# /act/display/play — play an asset through an adapter. One command for
+#                     both the face and arbitrary media: the adapter
+#                     field (or the file extension) says which decoder,
+#                     and the topic's instance segment says which
+#                     display. There used to be a separate /act/media
+#                     purely so a face renderer wouldn't be handed a
+#                     movie; /act/display/face0/ vs /act/display/media0/
+#                     does that now without a second message type.
+# /act/display/stop — interrupt whatever is playing
+consumes: [/act/display/play, /act/display/stop]
 
-# Pixels ride their OWN topic (with pacing — duration_ms/is_final, which
-# the decoder genuinely knows), so a renderer showing the face is never
-# handed a movie. Telemetry is separate again: monitoring whether a face
-# is keeping up must not require subscribing to its full pixel stream.
+# Pixels ride their OWN topic, carrying pacing the decoder genuinely
+# knows (duration_ms/is_final). Telemetry is separate again: monitoring
+# whether a face is keeping up must not require subscribing to its full
+# pixel stream — which at 4K would be ~1 GB/s.
 produces:
-  - /sense/animation_frame
-  - /sense/animation_state
-  - /sense/animation_stats
-  - /sense/media_frame
-  - /sense/media_state
+  - /act/display/frame
+  - /act/display/state
+  - /act/display/stats
 
 # Agentic I/O — the same capability shaped for a model, alongside the
 # topics above which serve any consumer. Same two-surface pattern as
