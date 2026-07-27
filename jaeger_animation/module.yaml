@@ -4,7 +4,7 @@
 
 module: animation
 slot: animation
-version: 0.1.0
+version: 0.2.0
 
 # The OWNERSHIP axis (TAXONOMY.md "Module KINDS") — orthogonal to
 # `slot`, which says what ROLE this fills.

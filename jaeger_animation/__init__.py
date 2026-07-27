@@ -19,7 +19,7 @@ what came across and what was deliberately left behind.
 
 from __future__ import annotations
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .base import AnimationAdapter
 from .config import AnimationConfig
