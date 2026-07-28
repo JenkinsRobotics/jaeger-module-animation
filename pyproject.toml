@@ -26,6 +26,20 @@ gui = ["pyside6>=6.5"]
 # its methods, so the package imports and every other adapter works
 # without these. A missing video codec must not cost you a face.
 video = ["imageio>=2.30", "imageio-ffmpeg>=0.4"]
+# For a machine with NO framework installed. JaegerOS is not on PyPI,
+# so `jaeger-os>=0.10` alone cannot resolve from nothing.
+#
+# OPTIONAL on purpose. A URL dependency forces pip to reinstall that
+# exact source even when a newer, satisfying jaeger-os is already
+# present — as a normal dependency it silently DOWNGRADES the framework
+# under a running app. As an extra you only get it when you ask, which
+# is exactly when you have nothing to lose.
+#
+#   pip install -e .                 framework already present
+#   pip install -e ".[bootstrap]"    fresh machine
+bootstrap = [
+  "jaeger-os @ git+https://github.com/JenkinsRobotics/JaegerOS@master",
+]
 
 # The out-of-tree discover_modules() seam — see jaeger_animation/
 # module_roots.py. JaegerOS finds this WITHOUT ever naming
