@@ -24,18 +24,67 @@ except Exception:  # pragma: no cover - optional dependency
 # Import base classes from the new neutral location
 from .mochi_animations import Script, Command
 
+#: Jumps allowed inside ONE update() call before the script is declared
+#: runaway and stopped.
+#:
+#: ponytail: a flat cap, not loop detection. A loop with a WAIT in it
+#: jumps once per frame and never approaches this; a loop WITHOUT one
+#: spins forever, and update() runs on the render thread, so "forever"
+#: means a frozen window rather than a slow animation. Raise it if a
+#: script legitimately needs to jump over more than this many sections
+#: in a single frame — or implement real cycle detection if that ever
+#: stops being a hypothetical.
+_MAX_JUMPS_PER_FRAME = 64
+
+
+def _id_of(raw) -> Optional[int]:
+    """The id in `K[1]` / `LBL[1]`, or in `K[1:name]` / `LBL[1:top]`.
+
+    The `:name` is a comment for whoever reads the script — the language
+    spec has said so since v2.0 — so it is stripped rather than being
+    part of the identity. Without this, `JMP LBL[1]` cannot find
+    `LBL[1:top]`, and `BITMAP K[1:eye]` resolves no resource at all.
+    """
+    try:
+        return int(str(raw).split(':', 1)[0].strip())
+    except (TypeError, ValueError):
+        return None
+
+
 # --- Mscript Parser (v3.0) ---
 class _MscriptParser:
     """Parses a .mscript file into resources and a list of main instructions."""
     def __init__(self, script_path: str):
         if not os.path.exists(script_path):
             raise FileNotFoundError(f"MochiScript file not found: {script_path}")
-        
+
         self.instructions: list[dict[str, any]] = []
         self.resources: dict[int, str] = {}
+        #: label id -> index of its LBL instruction, resolved once at
+        #: parse time. A jump is then a dict lookup rather than a scan
+        #: of the program on every iteration of a loop.
+        self.labels: dict[int, int] = {}
         # A set of argument keys that are known to be colors and need parsing.
         self._color_keys = {'FG', 'BG', 'CLR', 'CLR2'}
         self._parse(script_path)
+        self._index_labels()
+
+    def _index_labels(self):
+        for index, instruction in enumerate(self.instructions):
+            if instruction['command'] != 'LBL':
+                continue
+            label = _id_of(instruction['args'].get('LBL'))
+            if label is None:
+                print(f"Warning: unreadable label id "
+                      f"{instruction['args'].get('LBL')!r} — LBL skipped.")
+                continue
+            if label in self.labels:
+                # First wins, and say so: silently rebinding means a JMP
+                # lands somewhere the author did not write, which reads
+                # as the loop running the wrong section.
+                print(f"Warning: duplicate LBL[{label}] — keeping the first.")
+                continue
+            self.labels[label] = index
 
     def _parse(self, path: str):
         with open(path, 'r') as f:
@@ -66,12 +115,17 @@ class _MscriptParser:
             self.resources[int(res_id)] = res_path
 
     def _parse_main_line(self, line: str):
-        parts = line.split(maxsplit=1)
-        command = parts[0].upper()
-        args_str = parts[1] if len(parts) > 1 else ""
+        # `LBL[1]` is a whole line rather than a command plus arguments:
+        # the bracket rides the command token itself. Cutting the command
+        # at its first `[` and then scanning the WHOLE line for KEY[value]
+        # reads `LBL[1]` and `JMP LBL[1]` with one rule instead of two,
+        # and leaves every bracket-free command (`MATH K[1] D[2.0]`)
+        # parsing exactly as before.
+        head = line.split(maxsplit=1)[0]
+        command = head.split('[', 1)[0].upper()
 
         # Regex to find all KEY[value] pairs
-        arg_matches = re.findall(r'([A-Z_]+)\[([^\]]*)\]', args_str)
+        arg_matches = re.findall(r'([A-Z_]+)\[([^\]]*)\]', line)
         args = {key: val for key, val in arg_matches}
 
         # --- NEW: Normalize color arguments to integer lists ---
@@ -96,6 +150,8 @@ class MscriptScript(Script):
         parser = _MscriptParser(path)
         self._instructions = parser.instructions
         self._resources = parser.resources
+        self._labels = parser.labels
+        self._runaway = False
         # The asset root should be the project root, not the assets directory itself.
         # Assuming mscript files are always in assets/mscripts/.
         self._asset_root = Path(path).resolve().parent.parent.parent
@@ -112,6 +168,7 @@ class MscriptScript(Script):
 
         # Process all due commands until a WAIT is found
         due_commands: list[Command] = []
+        jumps = 0
         while self._program_counter < len(self._instructions):
             instruction = self._instructions[self._program_counter]
             self._program_counter += 1
@@ -119,6 +176,32 @@ class MscriptScript(Script):
             cmd_name = instruction['command']
             raw_args = instruction['args']
             args = raw_args.copy()
+
+            # ── control flow, before anything is issued ──
+            if cmd_name == 'LBL':
+                continue        # a position, not an action
+
+            if cmd_name == 'JMP':
+                target = _id_of(args.get('LBL'))
+                if target is None or target not in self._labels:
+                    # A typo must not take the performance down: skip the
+                    # jump and let the rest of the script play.
+                    print(f"Warning: JMP to unknown LBL[{args.get('LBL')}] "
+                          f"— ignored.")
+                    continue
+                jumps += 1
+                if jumps > _MAX_JUMPS_PER_FRAME:
+                    # A loop with no WAIT in it. Stopping is the only
+                    # honest option — this runs on the render thread, so
+                    # continuing means the window stops repainting.
+                    print(f"Warning: {jumps} jumps in one frame — runaway "
+                          f"loop at LBL[{target}], stopping the script. "
+                          f"A loop needs a WAIT.")
+                    self._runaway = True
+                    self._program_counter = len(self._instructions)
+                    return due_commands
+                self._program_counter = self._labels[target]
+                continue
 
             duration_token = args.pop('D', None)
             wait_after_command = self._parse_duration_token(duration_token, cmd_name, raw_args)
@@ -135,9 +218,8 @@ class MscriptScript(Script):
 
             # For all other commands, resolve the resource key if present
             if 'K' in args:
-                try:
-                    key = int(args['K'])
-                except (TypeError, ValueError):
+                key = _id_of(args['K'])
+                if key is None:
                     print(f"Warning: Invalid resource key '{args['K']}' for command {cmd_name}.")
                     continue  # Skip this invalid command
                 resource_path = self._resources.get(key)
@@ -180,12 +262,8 @@ class MscriptScript(Script):
         return None
 
     def _auto_duration_for_command(self, raw_args: dict) -> Optional[float]:
-        key_raw = raw_args.get('K')
-        if key_raw is None:
-            return None
-        try:
-            key = int(key_raw)
-        except (TypeError, ValueError):
+        key = _id_of(raw_args.get('K'))
+        if key is None:
             return None
         resource = self._resources.get(key)
         if not resource:
