@@ -199,13 +199,42 @@ class AnimationNode(Node):
 
     def _enqueue(self, *, key: str, asset: str, duration_ms: int,
                  params: dict) -> None:
+        """Accept a clip, and PREEMPT whatever is playing.
+
+        The contract has always said so — "a new command preempts
+        whatever is playing" — and the implementation only queued. The
+        difference shows up the moment anything drives the display
+        faster than clips finish: a performance changing expression
+        every half second filled the eight-slot queue and then dropped
+        the NEWEST request, which is the one that mattered.
+
+        Two changes, and both follow from a display being a STATE rather
+        than an event log:
+
+        · a full queue discards the OLDEST. Latest-wins — a superseded
+          expression nobody saw is not worth showing late.
+        · a new clip ends the current one. Otherwise the newest command
+          waits out however long the previous clip runs, which for a
+          held image is forever.
+
+        Something that genuinely wants a sequence should send an
+        mscript or a timeline, both of which sequence internally and
+        arrive here as ONE clip.
+        """
         if not asset:
             return
-        try:
-            self._pending.put_nowait((key, asset, duration_ms, params))
-        except queue.Full:
-            self._frames_dropped += 1
-            self._log(f"queue full; dropped {key!r} clip {asset!r}")
+        while True:
+            try:
+                self._pending.put_nowait((key, asset, duration_ms, params))
+                break
+            except queue.Full:
+                try:
+                    stale_key, stale_asset, _d, _p = self._pending.get_nowait()
+                    self._frames_dropped += 1
+                    self._log(f"superseded {stale_key!r} clip {stale_asset!r}")
+                except queue.Empty:      # drained under us; try again
+                    continue
+        self._stop_clip.set()
 
     # ── playback ─────────────────────────────────────────────────
 

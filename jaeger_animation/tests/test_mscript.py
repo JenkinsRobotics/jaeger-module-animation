@@ -292,3 +292,53 @@ def test_it_decodes_nothing_itself():
            / "adapters/mscript_adapter.py").read_text()
     for forbidden in ("Image.open", "imageio", "json.loads", "np.frombuffer"):
         assert forbidden not in src, f"mscript_adapter should not {forbidden}"
+
+
+# ── a display is a state, not an event log ───────────────────────
+
+def test_a_new_clip_preempts_and_the_newest_always_wins(tree):
+    """The contract says "a new command preempts whatever is playing",
+    and the node only queued. Anything driving the display faster than
+    clips finish — a performance changing expression twice a second —
+    filled the eight-slot queue and dropped the NEWEST request, which is
+    the only one that mattered."""
+    import queue as _queue
+
+    from jaeger_animation.node import AnimationNode
+
+    class _Bus:
+        def publish(self, *a, **k):
+            pass
+
+        def subscribe(self, *a, **k):
+            pass
+
+        def unsubscribe(self, *a, **k):
+            pass
+
+    node = AnimationNode(bus=_Bus(), width=W, height=H, queue_maxsize=2)
+    for n in range(6):
+        node._enqueue(key="bitmap", asset=f"face_{n}.json",
+                      duration_ms=0, params={})
+
+    queued = []
+    while True:
+        try:
+            queued.append(node._pending.get_nowait()[1])
+        except _queue.Empty:
+            break
+    # oldest discarded, newest kept — a superseded expression nobody saw
+    # is not worth showing late
+    assert queued == ["face_4.json", "face_5.json"]
+    # and the clip on screen was told to end
+    assert node._stop_clip.is_set()
+
+
+def test_an_mscript_still_sequences_internally(tree):
+    """Preempting must not break a script: a whole mscript arrives as
+    ONE clip and does its own sequencing, so nothing preempts anything."""
+    s = _script(
+        tree,
+        "MATH K[1] D[0.05]\nWAIT D[0.01]\nMEDIA K[2] D[0.5]\n",
+        "K[1]: 'assets/math/scene.py'\nK[2]: 'assets/gifs/clip.gif'\n")
+    assert len(_play(s, tree, n=12)) > 1
