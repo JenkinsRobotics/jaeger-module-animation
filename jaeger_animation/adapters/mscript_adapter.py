@@ -64,7 +64,10 @@ class MScriptAdapter:
     def __init__(self) -> None:
         self._script: Any = None
         self._active: Any = None
+        self._active_cache_key: int | None = None
         self._active_started: float = 0.0
+        self._keyframes: dict[int, Any] = {}
+        self._keyframe_started: dict[int, float] = {}
         self._width = 0
         self._height = 0
         self._params: dict = {}
@@ -91,6 +94,7 @@ class MScriptAdapter:
         """
         from ..procedural.mscript_engine import MscriptScript
 
+        self._close_all()
         p = dict(params or {})
         self._width = max(1, int(width))
         self._height = max(1, int(height))
@@ -101,12 +105,15 @@ class MScriptAdapter:
         self._params = p
         self._script = MscriptScript(str(script_path))
         self._active = None
+        self._active_cache_key = None
+        self._keyframes = {}
+        self._keyframe_started = {}
         self._start_t = None
         self._finished = False
         self._last = None
 
     def close(self) -> None:
-        self._close_active()
+        self._close_all()
         self._script = None
         self._finished = False
         self._last = None
@@ -118,9 +125,9 @@ class MScriptAdapter:
             self._start_t = t
         elapsed = max(0.0, t - self._start_t)
 
-        # Drain whatever the script says is due by now. The LAST asset
-        # command wins: a script that fires two clips in one tick meant
-        # the second to replace the first, not to race it.
+        # Drain commands in order. This matters for the v3 keyed-event
+        # contract: a K[n] asset command creates a persistent instance and a
+        # later EVENT command mutates that exact instance.
         try:
             commands = self._script.update(elapsed) or []
         except Exception as exc:  # noqa: BLE001
@@ -128,16 +135,16 @@ class MScriptAdapter:
                 f"motion script failed at t={elapsed:.3f}s: "
                 f"{type(exc).__name__}: {exc}") from exc
 
-        pending = None
         for cmd in commands:
             name = str(getattr(cmd, "name", "")).upper()
             if name in _TIMING_ONLY:
                 continue
             args = dict(getattr(cmd, "args", {}) or {})
-            if args.get("asset_path"):
-                pending = (name, args)
-        if pending is not None:
-            self._bind(*pending, elapsed=elapsed)
+            event = args.get("EVENT")
+            if event:
+                self._deliver_event(name, args, elapsed=elapsed)
+            elif args.get("asset_path"):
+                self._bind(name, args, elapsed=elapsed)
 
         if self._active is None:
             # Nothing bound yet, or the script has run out. Hold the
@@ -151,7 +158,7 @@ class MScriptAdapter:
         if frame is None:
             # The bound asset ended; hold its final frame until the
             # script says what comes next.
-            self._close_active()
+            self._deactivate_active()
             return self._last
         self._last = frame
         return frame
@@ -172,7 +179,9 @@ class MScriptAdapter:
         """Swap the active adapter to the asset this command names."""
         from . import ADAPTERS, adapter_for_path
 
+        args = dict(args)
         raw = str(args.pop("asset_path"))
+        cache_key = _coerce_key(args.get("K"))
         path = pathlib.Path(raw)
         if not path.is_absolute() and self._asset_root is not None:
             path = self._asset_root / raw
@@ -190,28 +199,114 @@ class MScriptAdapter:
                 f"motion script command {command!r} needs adapter {key!r}, "
                 f"which this engine does not have")
 
-        self._close_active()
+        self._deactivate_active()
+        if cache_key is not None and cache_key in self._keyframes:
+            previous = self._keyframes.pop(cache_key)
+            self._keyframe_started.pop(cache_key, None)
+            try:
+                previous.close()
+            except Exception:  # noqa: BLE001
+                pass
         adapter = cls()
         # Script args (FG, speed, ...) ride alongside the caller's, with
         # the script winning — it is the character's own intent.
         adapter.open(str(path), width=self._width, height=self._height,
-                     params={**self._params, **_clean(args)})
+                     params={**self._params, **_clean(command, args)})
         self._active = adapter
+        self._active_cache_key = cache_key
+        if cache_key is not None:
+            self._keyframes[cache_key] = adapter
+            self._keyframe_started[cache_key] = elapsed
         self._active_started = elapsed
 
-    def _close_active(self) -> None:
+    def _deliver_event(self, command: str, args: dict, *, elapsed: float) -> None:
+        """Deliver ``EVENT[name]`` to the persistent K[n] adapter."""
+        cache_key = _coerce_key(args.get("K"))
+        if cache_key is None or cache_key not in self._keyframes:
+            raise ValueError(
+                f"motion script {command} EVENT[{args.get('EVENT')}] "
+                f"references unopened key K[{args.get('K')}]"
+            )
+        adapter = self._keyframes[cache_key]
+        handler = getattr(adapter, "on_event", None)
+        if handler is None:
+            raise ValueError(
+                f"motion script {command} K[{cache_key}] does not support "
+                f"EVENT[{args.get('EVENT')}]"
+            )
+        event_params = {
+            key: value for key, value in args.items()
+            if key not in {"K", "EVENT", "asset_path"}
+        }
+        handler(str(args["EVENT"]), **event_params)
+        self._deactivate_active()
+        self._active = adapter
+        self._active_cache_key = cache_key
+        self._active_started = self._keyframe_started.get(cache_key, elapsed)
+
+    def _deactivate_active(self) -> None:
         if self._active is None:
             return
-        try:
-            self._active.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if self._active_cache_key is None:
+            try:
+                self._active.close()
+            except Exception:  # noqa: BLE001
+                pass
         self._active = None
+        self._active_cache_key = None
+
+    def _close_all(self) -> None:
+        transient = self._active if self._active_cache_key is None else None
+        adapters = list(self._keyframes.values())
+        if transient is not None:
+            adapters.append(transient)
+        seen: set[int] = set()
+        for adapter in adapters:
+            if id(adapter) in seen:
+                continue
+            seen.add(id(adapter))
+            try:
+                adapter.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self._active = None
+        self._active_cache_key = None
+        self._keyframes = {}
+        self._keyframe_started = {}
 
 
-def _clean(args: dict) -> dict:
-    """Drop mscript bookkeeping keys the adapters do not take."""
-    return {k: v for k, v in args.items() if k not in {"K", "D"}}
+def _clean(command: str, args: dict) -> dict:
+    """Translate the v3 token vocabulary into modern adapter params."""
+    cleaned = {k: v for k, v in args.items() if k not in {"K", "D"}}
+    aliases = {
+        "SPRITE": {"SRC": "src", "BG": "bg_rgb"},
+        "BITMAP": {"FG": "fg_rgb", "BG": "bg_rgb"},
+    }.get(command, {})
+    for old, new in aliases.items():
+        if old in cleaned:
+            cleaned[new] = cleaned.pop(old)
+    if command in {"MEDIA", "IMAGE", "GIF", "VIDEO"}:
+        if "BG" in cleaned:
+            cleaned["letterbox_rgb"] = cleaned.pop("BG")
+        if "SPD" in cleaned:
+            cleaned["speed"] = cleaned.pop("SPD")
+        if "FIT" in cleaned:
+            # v3 names: fit=contain, fill=cover, stretch=exact fill.
+            legacy_fit = str(cleaned.pop("FIT")).lower()
+            cleaned["fit"] = {
+                "fit": "contain", "fill": "cover", "stretch": "fill",
+            }.get(legacy_fit, legacy_fit)
+        if "LOOP" in cleaned:
+            value = cleaned.pop("LOOP")
+            cleaned["loop"] = str(value).lower() not in {"0", "false", "no"}
+    return cleaned
+
+
+def _coerce_key(value: Any) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 __all__ = ["MScriptAdapter"]

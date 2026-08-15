@@ -124,8 +124,41 @@ def test_every_declared_adapter_has_a_render_test():
 
 def test_extension_routing_matches_what_each_adapter_consumes():
     for ext, key in ((".png", "image"), (".bmp", "image"), (".gif", "gif"),
-                     (".json", "bitmap"), (".mp4", "video"), (".py", "math")):
+                     (".apng", "gif"), (".json", "bitmap"),
+                     (".mp4", "video"), (".py", "math")):
         assert adapter_for_path(f"x{ext}") == key, ext
+
+
+def test_gif_speed_changes_timeline_position(assets):
+    from jaeger_animation.adapters import GifAdapter
+
+    normal, fast = GifAdapter(), GifAdapter()
+    normal.open(str(assets / "a.gif"), width=8, height=8,
+                params={"speed": 1.0})
+    fast.open(str(assets / "a.gif"), width=8, height=8,
+              params={"speed": 2.0})
+    try:
+        normal.next_frame(0.0)
+        fast.next_frame(0.0)
+        assert normal.next_frame(0.05).data[0] == 150
+        assert fast.next_frame(0.05).data[0] == 250
+    finally:
+        normal.close()
+        fast.close()
+
+
+def test_video_contain_preserves_aspect_with_letterbox():
+    from jaeger_animation.adapters import VideoAdapter
+
+    adapter = VideoAdapter()
+    adapter._w = adapter._h = 32
+    adapter._fit = "contain"
+    adapter._letterbox_rgb = (1, 2, 3)
+    source = np.zeros((8, 16, 3), dtype=np.uint8)
+    source[..., 0] = 220
+    pixels = np.frombuffer(adapter._to_rgba(source), dtype=np.uint8).reshape(32, 32, 4)
+    assert tuple(pixels[0, 0, :3]) == (1, 2, 3)
+    assert pixels[16, 16, 0] == 220
 
 
 def test_a_broken_scene_raises_rather_than_rendering_nothing(assets):

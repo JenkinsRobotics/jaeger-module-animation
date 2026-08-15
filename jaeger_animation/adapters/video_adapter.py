@@ -23,7 +23,10 @@ class VideoAdapter:
         self._h = 0
         self._fps = 25.0
         self._n = 0
-        self._loop = True
+        self._loop = False
+        self._speed = 1.0
+        self._fit = "contain"
+        self._letterbox_rgb = (0, 0, 0)
 
     def open(self, asset_path: str, *, width: int, height: int, params: dict) -> None:
         # Imported lazily, and deliberately NOT in module.yaml's
@@ -39,7 +42,12 @@ class VideoAdapter:
                 "pip install 'jaeger-animation[video]'"
             ) from exc
         self._w, self._h = width, height
-        self._loop = bool((params or {}).get("loop", True))
+        p = dict(params or {})
+        self._loop = bool(p.get("loop", False))
+        self._speed = max(0.01, float(p.get("speed", 1.0)))
+        self._fit = str(p.get("fit", "contain")).lower()
+        self._letterbox_rgb = tuple(
+            int(value) for value in p.get("letterbox_rgb", (0, 0, 0)))
         self._reader = imageio.get_reader(asset_path)  # ffmpeg backend
         meta = self._reader.get_meta_data() or {}
         self._fps = float(meta.get("fps", 25.0)) or 25.0
@@ -51,7 +59,7 @@ class VideoAdapter:
     def next_frame(self, t: float) -> FrameBuffer | None:
         if self._reader is None:
             return None
-        i = int(t * self._fps)
+        i = int(t * self._fps * self._speed)
         if self._n and i >= self._n:
             if not self._loop:
                 return None
@@ -65,8 +73,15 @@ class VideoAdapter:
 
     def _to_rgba(self, arr: Any) -> bytes:
         from PIL import Image
+        from .image_adapter import _fit_contain, _fit_cover
+
         img = Image.fromarray(arr).convert("RGBA")
-        if (img.width, img.height) != (self._w, self._h):
+        if self._fit in ("contain", "letterbox", "fit"):
+            img = _fit_contain(
+                img, self._w, self._h, self._letterbox_rgb)
+        elif self._fit in ("cover", "crop"):
+            img = _fit_cover(img, self._w, self._h)
+        elif (img.width, img.height) != (self._w, self._h):
             img = img.resize((self._w, self._h), Image.BILINEAR)
         return img.tobytes()
 

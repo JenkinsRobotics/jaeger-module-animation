@@ -156,6 +156,17 @@ class MathAdapter:
         else:
             setattr(self._script, f"{key}_param", value)
 
+    def on_event(self, event: str, **params: Any) -> None:
+        """Deliver a named MScript event to the live procedural scene.
+
+        Mochi v3 keyed scene instances by ``K[n]`` and later commands such
+        as ``MATH K[1] EVENT[blink]`` mutated that same instance.  Keeping
+        this hook on the adapter preserves that contract without exposing
+        the scene object to the sequence runner.
+        """
+        if self._script is not None:
+            self._script.on_event(str(event), **params)
+
     def close(self) -> None:
         self._script = None
         self._start_t = None

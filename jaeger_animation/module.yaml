@@ -2,6 +2,10 @@
 # module into the slot system.  One copy of every truth: nothing else in
 # this repo restates what's declared here (CONVENTIONS.md law 1).
 
+id: org.jenkinsrobotics.animation.jaeger
+name: JaegerAnimation
+type: module
+implementation: jaeger
 module: animation
 slot: animation
 version: 0.3.0

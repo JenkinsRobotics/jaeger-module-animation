@@ -50,6 +50,7 @@ class GifAdapter:
         self._width: int = 0
         self._height: int = 0
         self._loop: bool = True
+        self._speed: float = 1.0
         self._start_time: float | None = None
 
     # ── Protocol surface ──────────────────────────────────────────
@@ -63,11 +64,13 @@ class GifAdapter:
           ``letterbox_rgb`` (r, g, b) for letterbox bands; default black
           ``loop``          True (default) plays forever; False plays
                             one pass then returns None
+          ``speed``         playback multiplier; default 1.0
         """
         p = dict(params or {})
         self._width = max(1, int(width))
         self._height = max(1, int(height))
         self._loop = bool(p.get("loop", True))
+        self._speed = max(0.01, float(p.get("speed", 1.0)))
         fit = str(p.get("fit", "contain")).lower()
         letterbox_rgb = tuple(p.get("letterbox_rgb", (0, 0, 0)))
         self._frames = _decode_animated(
@@ -89,7 +92,8 @@ class GifAdapter:
             return None
         if self._start_time is None:
             self._start_time = t
-        elapsed_ms = max(0, int((t - self._start_time) * 1000.0))
+        elapsed_ms = max(
+            0, int((t - self._start_time) * 1000.0 * self._speed))
         if not self._loop and elapsed_ms >= self._total_duration_ms:
             return None
         if self._total_duration_ms > 0:

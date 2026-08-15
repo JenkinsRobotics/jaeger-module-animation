@@ -75,6 +75,10 @@ def test_only_framework_tier_jaeger_import() -> None:
 # ── the manifest ─────────────────────────────────────────────────
 
 def test_manifest_identity() -> None:
+    assert MANIFEST["id"] == "org.jenkinsrobotics.animation.jaeger"
+    assert MANIFEST["name"] == "JaegerAnimation"
+    assert MANIFEST["type"] == "module"
+    assert MANIFEST["implementation"] == "jaeger"
     assert MANIFEST["module"] == "animation"
     assert MANIFEST["slot"] == "animation"
     assert MANIFEST["factory"].startswith("jaeger_animation:")

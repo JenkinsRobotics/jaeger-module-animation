@@ -50,7 +50,7 @@ EXTENSION_MAP: dict[str, str] = {
     ".png": "image", ".jpg": "image", ".jpeg": "image", ".webp": "image",
     ".bmp": "image", ".tif": "image", ".tiff": "image",
     ".json": "bitmap",
-    ".gif": "gif",
+    ".gif": "gif", ".apng": "gif",
     ".mp4": "video", ".mov": "video", ".mkv": "video", ".webm": "video",
     ".m4v": "video", ".avi": "video",
     ".py": "math",

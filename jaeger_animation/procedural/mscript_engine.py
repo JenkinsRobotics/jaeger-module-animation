@@ -36,6 +36,31 @@ from .mochi_animations import Script, Command
 #: stops being a hypothetical.
 _MAX_JUMPS_PER_FRAME = 64
 
+#: The section vocabulary, declared. MochiScript has had a fixed set
+#: since v2.0 and that rigidity is the point — a name outside it is a
+#: mistake, not an extension, and a parser that quietly accepts one
+#: drops a whole block of somebody's script without saying so.
+#:
+#: Extending the language means adding to THIS list on purpose.
+KNOWN_SECTIONS = frozenset({"Header", "Resources", "Main", "Keyframes"})
+
+#: Channels, added deliberately for multi-track shows: a figure that
+#: moves and speaks at once needs more than one line of execution.
+#: `Track_<channel>` sections are parsed by whoever schedules them —
+#: this engine plays a single channel and skips them, which is a
+#: DECISION recorded here rather than an accident of a loose regex.
+_SECTION = re.compile(
+    r'^\[(' + '|'.join(sorted(KNOWN_SECTIONS)) + r'|Track_[A-Za-z][A-Za-z0-9_]*)'
+    r' (start|end)\]$')
+
+#: Anything shaped like a section header, for telling a typo apart from
+#: an ordinary command line.
+_SECTION_SHAPED = re.compile(r'^\[[^\]]+\s+(start|end)\]$', re.IGNORECASE)
+
+
+def _looks_like_section(line: str) -> bool:
+    return bool(_SECTION_SHAPED.match(line))
+
 
 def _id_of(raw) -> Optional[int]:
     """The id in `K[1]` / `LBL[1]`, or in `K[1:name]` / `LBL[1:top]`.
@@ -97,16 +122,29 @@ class _MscriptParser:
                 continue
 
             # Check for section changes
-            section_match = re.match(r'^\[(Header|Resources|Main) (start|end)\]$', stripped)
+            section_match = _SECTION.match(stripped)
             if section_match:
                 section, state = section_match.groups()
                 current_section = section if state == 'start' else None
                 continue
+            if _looks_like_section(stripped):
+                # A section this engine does not know. NOT silently
+                # skipped: the vocabulary is declared, so an unknown
+                # name is a typo or a newer file, and both deserve to be
+                # said out loud rather than dropping a whole block.
+                raise ValueError(
+                    f"{path}: unknown section {stripped!r}. "
+                    f"Known: {', '.join(sorted(KNOWN_SECTIONS))}, "
+                    f"or Track_<channel>.")
 
             if current_section == 'Resources':
                 self._parse_resource_line(stripped)
             elif current_section == 'Main':
                 self._parse_main_line(stripped)
+            # Track_* sections are channels on a clock, scheduled by the
+            # app that owns a timeline. This engine is a single-channel
+            # player: it reads [Main] and leaves the tracks alone, on
+            # purpose. See jaeger_animation/docs/MSCRIPT.md.
 
     def _parse_resource_line(self, line: str):
         match = re.match(r"K\[(\d+)\]:\s*'([^']+)'", line)

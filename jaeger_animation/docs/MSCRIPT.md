@@ -37,14 +37,56 @@ BITMAP K[1] D[2.0]
 [Main end]
 ```
 
-- Only three section names exist: `Header`, `Resources`, `Main`. They
-  are **case-sensitive** — `[main start]` is not recognised and its
-  contents are silently skipped.
+- The section vocabulary is **declared and closed**, and has been since
+  v2.0. That rigidity is the point: a name outside the set is a typo,
+  and a parser that quietly accepts one drops a whole block of somebody
+  script without saying so. The engine now REFUSES an unknown section
+  rather than skipping it.
+
+  | Section | Meaning |
+  |---|---|
+  | `[Header …]` | informational metadata, `!` comments |
+  | `[Resources …]` | asset declarations — required by anything using `K[n]` |
+  | `[Main …]` | the sequential program |
+  | `[Keyframes …]` | reserved since v2.0, still unused |
+  | `[Track_<channel> …]` | a channel on a clock — see below |
+
+  Names are **case-sensitive**.
+
+  Extending the language means adding to that set on purpose, in every
+  reader. It is not open-ended.
 - Lines beginning with `!` are comments. Blank lines are ignored.
 - `Resources` is required by anything that references an asset.
-- Text outside a recognised section is ignored, so a trailing
-  `[Keyframes start] … [Keyframes end]` block (reserved by the old v2.0
-  spec, never implemented) is harmless but does nothing.
+- Text outside a section is ignored. `[Keyframes]` parses and does
+  nothing, as it has since v2.0.
+
+### Tracks — channels on a clock
+
+Added for multi-track shows: a figure that moves and speaks at once
+needs more than one line of execution.
+
+```text
+[Track_eyes start]
+FACE EXPR[look_up]   T[1.2]
+[Track_eyes end]
+
+[Track_motion start]
+SERVO JOINT[neck_pan] POS[-20] T[1.2] D[1.0]
+[Track_motion end]
+```
+
+`T[seconds]` is absolute from the track's start — a track says **when**,
+where `[Main]` says **what comes next**. A file may hold both, and they
+begin together: `[Main]` is the part that can branch, loop and wait for
+a person, which a clock cannot express.
+
+**This engine plays `[Main]` and skips tracks**, deliberately: it is a
+single-channel player and its job ends at frames on a topic. Scheduling
+channels belongs to whoever owns a timeline — in Mochi that is
+`core/staging.py`, which compiles the tracks into a
+`jaeger_os.timeline.Timeline`. The engine still *recognises* the
+sections, so a show file is valid to both readers rather than losing
+half its content in one of them.
 
 ---
 
