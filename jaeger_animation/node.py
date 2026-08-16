@@ -134,6 +134,11 @@ class AnimationNode(Node):
     def setup(self) -> None:
         self.bus.subscribe(topics.ACT_DISPLAY_PLAY, self._on_play)
         self.bus.subscribe(topics.ACT_DISPLAY_STOP, self._on_stop)
+        # Speech amplitude reaches the RUNNING clip. Every adapter has
+        # taken `set_runtime_param` since 0.5 and nothing ever called
+        # it, so `amplitude_param` was a hook wired at one end only —
+        # which is why a procedural face could never react to a voice.
+        self.bus.subscribe(topics.ACT_SPEECH_CHUNK, self._on_speech)
         self._log(
             f"subscribed: {topics.ACT_DISPLAY_PLAY}, "
             f"{topics.ACT_DISPLAY_STOP} "
@@ -155,6 +160,7 @@ class AnimationNode(Node):
         for topic, handler in (
             (topics.ACT_DISPLAY_PLAY, self._on_play),
             (topics.ACT_DISPLAY_STOP, self._on_stop),
+            (topics.ACT_SPEECH_CHUNK, self._on_speech),
         ):
             try:
                 self.bus.unsubscribe(topic, handler)
@@ -193,6 +199,24 @@ class AnimationNode(Node):
             duration_ms=int(getattr(msg, "duration_ms", 0) or 0),
             params=dict(getattr(msg, "params", None) or {}),
         )
+
+    def _on_speech(self, msg: Any) -> None:
+        """Bus thread, and deliberately the ONLY thing that touches the
+        adapter from here.
+
+        A parameter push is a float assignment, not a decode, so it does
+        not go through the queue: by the time a 30ms audio chunk reached
+        the front of a clip queue the sound it describes would be over.
+        An adapter that does not take parameters ignores it.
+        """
+        adapter = self._active
+        setter = getattr(adapter, "set_runtime_param", None)
+        if setter is None:
+            return
+        try:
+            setter("amplitude", float(getattr(msg, "amplitude", 0.0) or 0.0))
+        except Exception:  # noqa: BLE001 — never let a face break the audio
+            pass
 
     def _on_stop(self, msg: Any) -> None:
         self._stop_clip.set()
