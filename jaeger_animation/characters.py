@@ -206,6 +206,7 @@ def discover_characters(
         roots = (pathlib.Path(roots),)
 
     found: dict[str, Character] = {}
+    skipped: list[tuple] = []
     for root in roots:
         root = pathlib.Path(root)
         if not root.is_dir():
@@ -215,8 +216,29 @@ def discover_characters(
         for d in candidates:
             if not (d / "character.yaml").is_file():
                 continue
-            char = load_character(d)
+            try:
+                char = load_character(d)
+            except CharacterError as exc:
+                # ONE BAD PACK MUST NOT TAKE THE APP DOWN. Discovery is
+                # a scan of a directory anyone can drop a folder into,
+                # and it ran at BOOT — so a half-written character.yaml
+                # was a crash before any window opened, with the app
+                # naming a file most people would not connect to the
+                # trace above it.
+                #
+                # Reported rather than swallowed: a pack that silently
+                # does not appear is the other bad outcome.
+                skipped.append((d, str(exc)))
+                continue
             found[char.name] = char
+    if skipped:
+        import warnings
+
+        warnings.warn(
+            "skipped %d unreadable character pack(s): %s" % (
+                len(skipped),
+                "; ".join(f"{d.name} ({why})" for d, why in skipped)),
+            RuntimeWarning, stacklevel=2)
     return found
 
 
